@@ -393,25 +393,77 @@ def render_direct_agent_scenario(config: AzureConfig):
     """Render Scenario 1: Direct Agent with Bing Tool"""
     st.header("🎯 Scenario 1: Direct Agent with Bing Tool")
     
-    st.info("""
+    # Architecture explanation with Mermaid
+    st.markdown("""
     **Architecture:** User → AI Agent (with Bing Grounding Tool attached directly)
     
-    In this scenario, the Bing tool is attached directly to the agent. The market parameter 
-    is configured in `BingGroundingSearchConfiguration` when creating the tool.
+    In this scenario, you pass the **market parameter explicitly** when configuring the tool.
+    The market dropdown below directly controls the `BingGroundingSearchConfiguration.market` value.
     """)
     
-    # Show architecture diagram
-    with st.expander("📊 Architecture Diagram", expanded=False):
-        st.code("""
-┌─────────────┐      ┌───────────────────────────────────────┐
-│             │      │         AI Foundry Agent              │
-│    User     │─────►│  ┌─────────────────────────────────┐  │
-│   (You)     │      │  │     Bing Grounding Tool         │  │
-│             │      │  │   market="en-US" / "de-DE"      │  │
-└─────────────┘      │  └─────────────────────────────────┘  │
-                     └───────────────────────────────────────┘
-        """, language="text")
+    # Mermaid diagram for Scenario 1
+    with st.expander("📊 Architecture Diagram (Mermaid)", expanded=True):
+        st.markdown("""
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant App as 🖥️ Streamlit App
+    participant Agent as 🤖 AI Agent
+    participant Tool as 🔧 Bing Tool
+    participant Bing as 🌐 Bing Search API
     
+    U->>App: Enter company + Select market (de-DE)
+    App->>App: Create BingGroundingSearchConfiguration<br/>with market="de-DE"
+    App->>Agent: Create Agent with Bing Tool
+    App->>Agent: Send analysis prompt
+    Agent->>Tool: Invoke Bing search
+    Tool->>Bing: Search with market=de-DE
+    Bing-->>Tool: German-localized results
+    Tool-->>Agent: Search results
+    Agent-->>App: Analysis response
+    App-->>U: Display results
+```
+        """)
+        
+        st.caption("💡 The market parameter is set **at tool creation time**, before the agent processes the request.")
+    
+    # Data flow explanation
+    st.subheader("🔄 Market Parameter Flow")
+    
+    col_flow1, col_flow2, col_flow3 = st.columns(3)
+    
+    with col_flow1:
+        st.markdown("""
+        **Step 1: User Selection**
+        ```
+        Market Dropdown → "de-DE"
+        ```
+        """)
+        
+    with col_flow2:
+        st.markdown("""
+        **Step 2: Tool Configuration**
+        ```python
+        BingGroundingSearchConfiguration(
+            market="de-DE",  # From dropdown
+            ...
+        )
+        ```
+        """)
+        
+    with col_flow3:
+        st.markdown("""
+        **Step 3: Agent Creation**
+        ```python
+        agent = create_agent(
+            tools=[bing_tool]  # Tool has market
+        )
+        ```
+        """)
+    
+    st.divider()
+    
+    # Main content with explicit market control
     render_main_content(config)
 
 
@@ -419,26 +471,79 @@ def render_mcp_agent_scenario(config: AzureConfig):
     """Render Scenario 2: Agent calling another Agent via MCP"""
     st.header("🔗 Scenario 2: Agent → MCP Server (Another Agent)")
     
-    st.info("""
+    st.markdown("""
     **Architecture:** User → Agent 1 (Orchestrator) → MCP Server → Agent 2 (Bing Tool)
     
-    In this scenario, Agent 1 (without Bing tool) calls an MCP server that hosts Agent 2 
-    (with Bing tool). The market parameter flows from Agent 1 through the MCP tool call.
+    In this scenario, the **market parameter flows through the entire chain**:
+    User Selection → MCP Tool Arguments → Agent 2 Tool Configuration
     """)
     
-    # Show architecture diagram
-    with st.expander("📊 Architecture Diagram", expanded=True):
-        st.code("""
-┌─────────────┐    ┌───────────────────┐    ┌────────────────────────────────┐
-│             │    │    Agent 1        │    │        MCP Server              │
-│    User     │───►│  (Orchestrator)   │───►│  ┌──────────────────────────┐  │
-│   (You)     │    │                   │    │  │      Agent 2             │  │
-│             │    │  - Has MCP Tool   │MCP │  │  (Bing Grounding Tool)   │  │
-│  "Analyze   │    │  - Passes market  │───►│  │  market=<from Agent 1>  │  │
-│   Tesla     │    │    to MCP call    │    │  └──────────────────────────┘  │
-│   de-DE"    │    │                   │    │                                │
-└─────────────┘    └───────────────────┘    └────────────────────────────────┘
-        """, language="text")
+    # Mermaid diagram for Scenario 2
+    with st.expander("📊 Architecture Diagram (Mermaid)", expanded=True):
+        st.markdown("""
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant App as 🖥️ Streamlit App
+    participant A1 as 🤖 Agent 1<br/>(Orchestrator)
+    participant MCP as 🔌 MCP Server
+    participant A2 as 🤖 Agent 2<br/>(Bing Agent)
+    participant Bing as 🌐 Bing API
+    
+    U->>App: Enter company + Select market (de-DE)
+    App->>MCP: MCP tools/call<br/>{"name": "analyze_company_risk",<br/>"arguments": {"market": "de-DE"}}
+    
+    Note over MCP: MCP Server extracts<br/>market from arguments
+    
+    MCP->>A2: Create Agent with<br/>BingTool(market="de-DE")
+    A2->>Bing: Search with market=de-DE
+    Bing-->>A2: German-localized results
+    A2-->>MCP: Analysis response
+    MCP-->>App: MCP result
+    App-->>U: Display results
+```
+        """)
+        
+        st.caption("💡 The market parameter is passed **as an MCP tool argument** and used to dynamically create the Bing tool.")
+    
+    # Data flow explanation
+    st.subheader("🔄 Market Parameter Flow")
+    
+    col_flow1, col_flow2, col_flow3, col_flow4 = st.columns(4)
+    
+    with col_flow1:
+        st.markdown("""
+        **Step 1: User**
+        ```
+        Dropdown → "de-DE"
+        ```
+        """)
+        
+    with col_flow2:
+        st.markdown("""
+        **Step 2: MCP Call**
+        ```json
+        {
+          "market": "de-DE"
+        }
+        ```
+        """)
+        
+    with col_flow3:
+        st.markdown("""
+        **Step 3: MCP Server**
+        ```python
+        market = args["market"]
+        ```
+        """)
+        
+    with col_flow4:
+        st.markdown("""
+        **Step 4: Bing Tool**
+        ```python
+        market="de-DE"
+        ```
+        """)
     
     st.divider()
     
@@ -689,8 +794,76 @@ def run_mcp_analysis(url: str, key: str, company_name: str, risk_category: str, 
 def render_documentation_tab():
     """Render the documentation tab"""
     st.header("📖 Documentation")
-        
-    # Scenario comparison
+    
+    # Main architecture comparison with Mermaid
+    st.subheader("🏗️ Architecture Comparison")
+    
+    st.markdown("""
+### Scenario 1: Direct Agent with Bing Tool
+
+```mermaid
+flowchart LR
+    subgraph User["👤 User Interface"]
+        A[Company Input] --> B[Market Dropdown]
+    end
+    
+    subgraph App["🖥️ Application"]
+        C[Create Tool Config<br/>market from dropdown]
+        D[Create Agent<br/>with Bing Tool]
+    end
+    
+    subgraph Agent["🤖 AI Foundry Agent"]
+        E[GPT-4o Model]
+        F[Bing Tool<br/>market=user_selection]
+    end
+    
+    subgraph Bing["🌐 Bing Search"]
+        G[Search API<br/>market-localized]
+    end
+    
+    B --> C --> D --> E
+    E --> F --> G
+    G --> E --> App --> User
+    
+    style B fill:#90EE90
+    style F fill:#90EE90
+```
+
+### Scenario 2: Agent → MCP Server (Agent-to-Agent)
+
+```mermaid
+flowchart LR
+    subgraph User["👤 User Interface"]
+        A[Company Input] --> B[Market Dropdown]
+    end
+    
+    subgraph App["🖥️ Application"]
+        C[Build MCP Call<br/>market in arguments]
+    end
+    
+    subgraph MCP["🔌 MCP Server"]
+        D[Receive MCP Request]
+        E[Extract market<br/>from arguments]
+        F[Create Bing Tool<br/>with market]
+        G[🤖 Agent 2]
+    end
+    
+    subgraph Bing["🌐 Bing Search"]
+        H[Search API<br/>market-localized]
+    end
+    
+    B --> C -->|"market: de-DE"| D --> E --> F --> G --> H
+    H --> G --> MCP --> App --> User
+    
+    style B fill:#90EE90
+    style E fill:#90EE90
+    style F fill:#90EE90
+```
+    """)
+    
+    st.divider()
+    
+    # Scenario comparison table
     st.subheader("🔄 Scenario Comparison")
     
     col1, col2 = st.columns(2)
@@ -699,126 +872,192 @@ def render_documentation_tab():
         st.markdown("""
         ### Scenario 1: Direct Agent
         
-        **Architecture:**
-        ```
-        User → Agent (Bing Tool)
-        ```
+        | Aspect | Detail |
+        |--------|--------|
+        | **Architecture** | User → Agent (Bing Tool) |
+        | **Market Config** | At tool creation time |
+        | **Latency** | Low (single agent) |
+        | **Complexity** | Simple |
         
-        **Pros:**
-        - Simpler architecture
-        - Lower latency (one agent)
-        - Direct control over tool config
-        
-        **Cons:**
-        - Tool config must be at agent creation
-        - Less flexible for multi-tool scenarios
+        **Market Parameter Flow:**
+        ```
+        User Dropdown → Tool Config → Bing API
+        ```
         
         **Best For:**
         - Single-purpose agents
         - Direct Bing search needs
+        - Lower latency requirements
         """)
         
     with col2:
         st.markdown("""
         ### Scenario 2: Agent → MCP Agent
         
-        **Architecture:**
-        ```
-        User → Agent 1 → MCP Server → Agent 2 (Bing)
-        ```
+        | Aspect | Detail |
+        |--------|--------|
+        | **Architecture** | User → MCP → Agent (Bing) |
+        | **Market Config** | As MCP argument |
+        | **Latency** | Higher (MCP + agent) |
+        | **Complexity** | Moderate |
         
-        **Pros:**
-        - Decoupled architecture
-        - MCP tools can be reused
-        - Market passed at runtime
-        - Multiple agents can share MCP server
-        
-        **Cons:**
-        - Higher latency (two agents)
-        - More infrastructure to manage
+        **Market Parameter Flow:**
+        ```
+        User Dropdown → MCP Args → Tool Config → Bing
+        ```
         
         **Best For:**
         - Multi-agent systems
         - Shared tool infrastructure
+        - Decoupled architectures
         """)
     
     st.divider()
     
-    st.subheader("📊 Market Parameter Flow")
+    # Market parameter flow detail
+    st.subheader("📊 Market Parameter Flow (Detailed)")
     
     st.markdown("""
-    ### How Market Flows in Each Scenario
+### Sequence Diagram: How Market Flows in Each Scenario
+
+```mermaid
+sequenceDiagram
+    box Scenario 1: Direct Agent
+        participant U1 as 👤 User
+        participant A1 as 🖥️ App
+        participant T1 as 🔧 Bing Tool
+        participant B1 as 🌐 Bing API
+    end
     
-    #### Scenario 1 (Direct)
-    ```python
-    # Market set at tool creation time
-    bing_tool = BingGroundingTool(
-        bing_grounding_search=BingGroundingSearchConfiguration(
-            connection_id=connection_id,
-            market="de-DE",  # ← Set here
-        )
+    U1->>A1: Select market="de-DE"
+    A1->>A1: BingGroundingSearchConfiguration(market="de-DE")
+    A1->>T1: Create tool with config
+    T1->>B1: Search (market=de-DE)
+    B1-->>U1: German results
+    
+    Note over U1,B1: Market is set at TOOL CREATION
+```
+
+```mermaid
+sequenceDiagram
+    box Scenario 2: Agent → MCP Agent
+        participant U2 as 👤 User
+        participant A2 as 🖥️ App
+        participant M2 as 🔌 MCP Server
+        participant T2 as 🔧 Bing Tool
+        participant B2 as 🌐 Bing API
+    end
+    
+    U2->>A2: Select market="de-DE"
+    A2->>M2: MCP call: {arguments: {market: "de-DE"}}
+    M2->>M2: Extract market from arguments
+    M2->>T2: BingGroundingSearchConfiguration(market=args.market)
+    T2->>B2: Search (market=de-DE)
+    B2-->>U2: German results
+    
+    Note over U2,B2: Market is PASSED AS ARGUMENT then used at tool creation
+```
+    """)
+    
+    st.divider()
+    
+    # Code examples
+    st.subheader("💻 Code Examples")
+    
+    st.markdown("""
+### How Market Flows in Each Scenario
+    
+#### Scenario 1 (Direct) - Market at Tool Creation
+```python
+# User selects market from dropdown
+market = "de-DE"  # From st.selectbox
+
+# Market set at tool creation time - BEFORE agent processes request
+bing_tool = BingGroundingTool(
+    bing_grounding_search=BingGroundingSearchConfiguration(
+        connection_id=connection_id,
+        market=market,  # ← EXPLICIT from user selection
+        count=10,
+        freshness="Month"
     )
-    agent = create_agent(tools=bing_tool)
-    ```
-    
-    #### Scenario 2 (MCP)
-    ```python
-    # Agent 1: User's request includes market preference
-    user_request = "Analyze Tesla using German market (de-DE)"
-    
-    # Agent 1 extracts market and calls MCP tool
-    mcp_tool_call = {
+)
+
+# Create agent with pre-configured tool
+agent = create_agent(
+    model="gpt-4o",
+    tools=[bing_tool]  # Tool already has market set
+)
+
+# Run the agent
+response = agent.run(prompt)
+```
+
+#### Scenario 2 (MCP) - Market as Tool Argument
+```python
+# User selects market from dropdown
+market = "de-DE"  # From st.selectbox
+
+# Market passed as MCP tool argument
+mcp_request = {
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
         "name": "analyze_company_risk",
         "arguments": {
             "company_name": "Tesla",
-            "market": "de-DE"  # ← Passed to MCP
+            "market": market  # ← EXPLICIT from user, passed to MCP
         }
     }
+}
+
+# MCP Server receives and extracts market
+# Then creates tool dynamically with that market
+def handle_mcp_call(arguments):
+    market = arguments.get("market", "en-US")  # Extract from args
     
-    # MCP Server (Agent 2) receives market and creates tool dynamically
     bing_tool = BingGroundingTool(
         bing_grounding_search=BingGroundingSearchConfiguration(
-            connection_id=connection_id,
-            market=arguments["market"],  # ← From MCP call
+            market=market,  # ← From MCP arguments
         )
     )
-    ```
+    # Create agent and run...
+```
     """)
     
     st.divider()
     
     st.markdown("""
-    ## Understanding the Market Parameter in Bing Grounding
-    
-    ### Configuration Location
-    
-    The `market` parameter is configured in `BingGroundingSearchConfiguration`, which is part of 
-    `BingGroundingSearchToolParameters` when creating a `BingGroundingAgentTool`.
-    
-    ```python
-    from azure.ai.projects.models import (
-        BingGroundingAgentTool,
-        BingGroundingSearchToolParameters,
-        BingGroundingSearchConfiguration,
+## Understanding the Market Parameter in Bing Grounding
+
+### Configuration Location
+
+The `market` parameter is configured in `BingGroundingSearchConfiguration`, which is part of 
+`BingGroundingSearchToolParameters` when creating a `BingGroundingAgentTool`.
+
+```python
+from azure.ai.projects.models import (
+    BingGroundingAgentTool,
+    BingGroundingSearchToolParameters,
+    BingGroundingSearchConfiguration,
+)
+
+# Market is specified HERE - at the tool configuration level
+bing_tool = BingGroundingAgentTool(
+    bing_grounding=BingGroundingSearchToolParameters(
+        search_configurations=[
+            BingGroundingSearchConfiguration(
+                project_connection_id=connection_id,
+                market="de-CH",  # <-- MARKET PARAMETER
+                count=10,
+                freshness="Month",
+                set_lang="de"  # Optional: UI language
+            )
+        ]
     )
-    
-    # Market is specified HERE - at the tool configuration level
-    bing_tool = BingGroundingAgentTool(
-        bing_grounding=BingGroundingSearchToolParameters(
-            search_configurations=[
-                BingGroundingSearchConfiguration(
-                    project_connection_id=connection_id,
-                    market="de-CH",  # <-- MARKET PARAMETER
-                    count=10,
-                    freshness="Month",
-                    set_lang="de"  # Optional: UI language
-                )
-            ]
-        )
-    )
-    ```
-    
-    ### Key Points
+)
+```
+
+### Key Points
     
     1. **NOT at Agent Level**: The market is not specified when creating the agent itself, 
        but when configuring the Bing tool.

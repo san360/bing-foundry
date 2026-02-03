@@ -10,6 +10,48 @@ The application analyzes companies for:
 - Negative news coverage (child labor, environmental issues, etc.)
 - Overall risk profile assessment
 
+## 🏗️ Two Scenarios for Market Parameter Testing
+
+This PoC demonstrates **two architectures** for passing the market parameter to Bing Grounding:
+
+### Scenario 1: Direct Agent with Bing Tool
+
+User explicitly selects market from dropdown → Tool is configured with that market → Agent uses tool
+
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant App as 🖥️ App
+    participant Agent as 🤖 Agent
+    participant Bing as 🌐 Bing API
+    
+    U->>App: Select market="de-DE" from dropdown
+    App->>App: BingGroundingSearchConfiguration(market="de-DE")
+    App->>Agent: Create Agent with configured tool
+    Agent->>Bing: Search with market=de-DE
+    Bing-->>U: German-localized results
+```
+
+### Scenario 2: Agent → MCP Server (Another Agent)
+
+User selects market → Market passed as MCP tool argument → MCP Server creates tool dynamically
+
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant App as 🖥️ App
+    participant MCP as 🔌 MCP Server
+    participant Agent2 as 🤖 Agent 2
+    participant Bing as 🌐 Bing API
+    
+    U->>App: Select market="de-DE" from dropdown
+    App->>MCP: tools/call {arguments: {market: "de-DE"}}
+    MCP->>MCP: Extract market from arguments
+    MCP->>Agent2: Create tool with market from args
+    Agent2->>Bing: Search with market=de-DE
+    Bing-->>U: German-localized results
+```
+
 ## 🔑 Key Technical Investigation: Market Parameter
 
 This PoC specifically investigates how the `market` parameter works with Bing Grounding:
@@ -33,12 +75,12 @@ BingGroundingAgentTool(
 )
 ```
 
-### Can it be passed at Runtime?
+### How to Pass Market Explicitly (User Perspective)
 
-**YES!** You have two options:
-
-1. **Create multiple agents** with different market configurations
-2. **Create the tool dynamically** at runtime with different market values before invoking the agent
+| Scenario | How Market is Passed | When Tool is Configured |
+|----------|---------------------|------------------------|
+| **Direct Agent** | User selects from dropdown → Code creates tool with that market | At tool creation, before agent runs |
+| **MCP Agent** | User selects from dropdown → Market sent as MCP argument | Dynamically when MCP request arrives |
 
 ### Default Behavior (No Market Specified)
 
@@ -71,9 +113,9 @@ bing-foundry/
 │   │   ├── __init__.py
 │   │   ├── company_risk_agent.py   # Main agent logic
 │   │   └── prompts.py              # Pre-baked prompts
-│   ├── app.py                      # Streamlit UI
+│   ├── app.py                      # Streamlit UI (4 tabs)
 │   └── config.py                   # Configuration
-├── mcp-server/                     # 🆕 MCP Server (Azure Functions)
+├── mcp-server/                     # MCP Server (Azure Functions)
 │   ├── function_app.py             # MCP tools implementation
 │   ├── host.json                   # MCP extension config
 │   ├── requirements.txt

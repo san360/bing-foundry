@@ -12,6 +12,57 @@ The MCP server exposes three tools:
 | `analyze_company_risk` | Analyze company risks for insurance assessment |
 | `list_supported_markets` | List available market codes |
 
+## 🏗️ Architecture
+
+### How Market Parameter Flows Through MCP
+
+```mermaid
+sequenceDiagram
+    participant Client as 🖥️ Client App
+    participant MCP as 🔌 MCP Server
+    participant Handler as 📋 Tool Handler
+    participant Agent as 🤖 AI Agent
+    participant Bing as 🌐 Bing API
+    
+    Client->>MCP: POST /mcp<br/>{"method": "tools/call",<br/>"params": {"name": "analyze_company_risk",<br/>"arguments": {"market": "de-DE"}}}
+    
+    MCP->>Handler: Route to analyze_company_risk
+    Handler->>Handler: Extract market="de-DE"<br/>from arguments
+    Handler->>Agent: Create BingTool(market="de-DE")
+    Agent->>Bing: Search with market=de-DE
+    Bing-->>Agent: German-localized results
+    Agent-->>MCP: Analysis response
+    MCP-->>Client: MCP result
+```
+
+### Component Diagram
+
+```mermaid
+flowchart TB
+    subgraph Clients["🖥️ MCP Clients"]
+        C1[Streamlit App]
+        C2[GitHub Copilot]
+        C3[Custom Agent]
+    end
+    
+    subgraph MCP["🔌 MCP Server"]
+        E[HTTP Endpoint<br/>/mcp or /runtime/webhooks/mcp]
+        T1[bing_grounded_search]
+        T2[analyze_company_risk]
+        T3[list_supported_markets]
+    end
+    
+    subgraph Azure["☁️ Azure AI Foundry"]
+        A[AI Agent<br/>GPT-4o]
+        B[Bing Grounding<br/>Connection]
+    end
+    
+    C1 & C2 & C3 -->|"market in args"| E
+    E --> T1 & T2 & T3
+    T1 & T2 -->|"market in config"| A
+    A --> B
+```
+
 ## 🚀 Deployment Options
 
 ### Option 1: Azure Functions (Recommended for Production)
