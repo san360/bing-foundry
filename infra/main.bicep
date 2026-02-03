@@ -21,7 +21,14 @@ param tags object = {
   workload: workloadName
   environment: environment
   purpose: 'bing-grounding-poc'
+  SecurityControl: 'Ignore'
 }
+
+@description('Project name for AI Foundry')
+param projectName string = 'companyrisk-project'
+
+@description('Bing connection name')
+param bingConnectionName string = 'bing-grounding'
 
 // ============================================================================
 // VARIABLES
@@ -33,6 +40,7 @@ var aiServicesName = 'ai-${workloadName}-${uniqueSuffix}'
 var bingResourceName = 'bing-${workloadName}-${uniqueSuffix}'
 var logAnalyticsName = 'law-${workloadName}-${uniqueSuffix}'
 var storageAccountName = 'st${take(replace(workloadName, '-', ''), 10)}${take(uniqueSuffix, 8)}'
+var appInsightsName = 'appi-${workloadName}-${uniqueSuffix}'
 
 // ============================================================================
 // RESOURCE GROUP
@@ -57,6 +65,23 @@ module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.15.0' = 
     tags: tags
     skuName: 'PerGB2018'
     dataRetention: 30
+  }
+}
+
+// ============================================================================
+// APPLICATION INSIGHTS (for Tracing)
+// ============================================================================
+
+module appInsights 'br/public:avm/res/insights/component:0.5.0' = {
+  scope: rg
+  name: 'appInsightsDeployment'
+  params: {
+    name: appInsightsName
+    location: location
+    tags: tags
+    workspaceResourceId: logAnalytics.outputs.resourceId
+    kind: 'web'
+    applicationType: 'web'
   }
 }
 
@@ -107,6 +132,7 @@ module aiServices 'br/public:avm/res/cognitive-services/account:0.14.1' = {
     sku: 'S0'
     customSubDomainName: aiServicesName
     publicNetworkAccess: 'Enabled'
+    allowProjectManagement: true  // Enable project management for AI Foundry
     managedIdentities: {
       systemAssigned: true
     }
@@ -147,6 +173,26 @@ module aiServices 'br/public:avm/res/cognitive-services/account:0.14.1' = {
 }
 
 // ============================================================================
+// AI FOUNDRY PROJECT AND BING CONNECTION
+// ============================================================================
+
+module aiFoundryProject 'modules/ai-foundry-project.bicep' = {
+  scope: rg
+  name: 'aiFoundryProjectDeployment'
+  params: {
+    aiServicesName: aiServicesName
+    projectName: projectName
+    location: location
+    bingConnectionName: bingConnectionName
+    bingResourceId: bingGrounding.outputs.resourceId
+    bingApiKey: bingGrounding.outputs.apiKey
+    appInsightsResourceId: appInsights.outputs.resourceId
+    appInsightsConnectionString: appInsights.outputs.connectionString
+  }
+  dependsOn: [aiServices, bingGrounding, appInsights]
+}
+
+// ============================================================================
 // OUTPUTS
 // ============================================================================
 
@@ -171,5 +217,20 @@ output modelDeploymentName string = 'gpt-4o'
 @description('Storage account name')
 output storageAccountName string = storageAccount.outputs.name
 
-@description('Bing connection ID format')
-output bingConnectionIdFormat string = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${rg.name}/providers/Microsoft.CognitiveServices/accounts/${aiServicesName}/projects/<PROJECT_NAME>/connections/<CONNECTION_NAME>'
+@description('Project name')
+output projectName string = projectName
+
+@description('Bing connection name')
+output bingConnectionName string = bingConnectionName
+
+@description('Project endpoint URL')
+output projectEndpoint string = aiFoundryProject.outputs.projectEndpoint
+
+@description('Full Bing connection ID')
+output bingConnectionId string = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${rg.name}/providers/Microsoft.CognitiveServices/accounts/${aiServicesName}/projects/${projectName}/connections/${bingConnectionName}'
+
+@description('Application Insights name')
+output appInsightsName string = appInsights.outputs.name
+
+@description('Application Insights connection string')
+output appInsightsConnectionString string = appInsights.outputs.connectionString

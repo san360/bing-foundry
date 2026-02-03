@@ -8,4 +8,7 @@ param tags = {
   environment: 'dev'
   purpose: 'bing-grounding-poc'
   createdBy: 'azd'
+  SecurityControl: 'Ignore'
 }
+param projectName = 'companyrisk-project'
+param bingConnectionName = 'bing-grounding'

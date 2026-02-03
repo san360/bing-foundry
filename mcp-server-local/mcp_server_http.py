@@ -26,10 +26,10 @@ from azure.ai.projects import AIProjectClient
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuration
-PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
-BING_CONNECTION_NAME = os.getenv("BING_CONNECTION_NAME", "")
-MODEL_DEPLOYMENT_NAME = os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-4o")
+# Configuration - Support both naming conventions for flexibility
+PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("PROJECT_ENDPOINT", "")
+BING_CONNECTION_NAME = os.getenv("BING_PROJECT_CONNECTION_NAME") or os.getenv("BING_CONNECTION_NAME", "")
+MODEL_DEPLOYMENT_NAME = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME") or os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-4o")
 PORT = int(os.getenv("PORT", "8000"))
 
 # Supported markets

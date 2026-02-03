@@ -7,10 +7,22 @@ This module demonstrates:
 3. Runtime configuration of the market parameter
 """
 import os
+import sys
+import logging
+import traceback
 from dataclasses import dataclass, field
 from typing import Optional, AsyncIterator, Any
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+# OpenTelemetry tracing
+try:
+    from opentelemetry import trace
+    tracer = trace.get_tracer(__name__)
+except ImportError:
+    tracer = None
+# Configure logging for this module
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 from azure.ai.projects.models import (
     PromptAgentDefinition,
     BingGroundingAgentTool,
@@ -189,7 +201,24 @@ class CompanyRiskAgent:
         Returns:
             AgentResponse with analysis results
         """
-        await self._ensure_initialized()
+        # Create tracing span if available
+        span_context = None
+        if tracer:
+            span_context = tracer.start_as_current_span(
+                "analyze_company",
+                attributes={
+                    "company_analysis.market": market or "default",
+                    "company_analysis.count": count,
+                    "company_analysis.freshness": freshness,
+                    "company_analysis.prompt_length": len(prompt),
+                }
+            )
+        
+        try:
+            if span_context:
+                span_context.__enter__()
+                
+            await self._ensure_initialized()
         
         # Create tool with specified market configuration
         # THIS IS THE KEY: Market is set per-tool, per-request!
@@ -212,18 +241,28 @@ class CompanyRiskAgent:
         
         try:
             # Execute the analysis
+            logger.info(f"Executing analysis with agent: {agent.name}")
+            logger.debug(f"Request parameters - prompt length: {len(prompt)}, market: {market}, count: {count}, freshness: {freshness}")
+            
             response = self._openai_client.responses.create(
                 tool_choice="required",  # Force use of Bing tool
                 input=prompt,
                 extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
             )
             
+            logger.debug(f"Response received - output items count: {len(response.output) if response.output else 0}")
+            logger.debug(f"Response output_text length: {len(response.output_text) if response.output_text else 0}")
+            
             # Extract citations
             citations = []
-            for item in response.output:
+            for idx, item in enumerate(response.output):
+                logger.debug(f"Processing output item {idx}: type={type(item).__name__}, has_content={hasattr(item, 'content')}")
                 if hasattr(item, 'content'):
-                    for content in item.content:
-                        if hasattr(content, 'annotations'):
+                    logger.debug(f"  Item {idx} content: {type(item.content).__name__ if item.content else 'None'}, value={item.content}")
+                if hasattr(item, 'content') and item.content is not None:
+                    for content_idx, content in enumerate(item.content):
+                        logger.debug(f"    Content {content_idx}: type={type(content).__name__}, has_annotations={hasattr(content, 'annotations')}")
+                        if hasattr(content, 'annotations') and content.annotations is not None:
                             for annotation in content.annotations:
                                 if hasattr(annotation, 'url'):
                                     citations.append({
@@ -233,7 +272,9 @@ class CompanyRiskAgent:
                                         "end_index": getattr(annotation, 'end_index', 0),
                                     })
             
-            return AgentResponse(
+            logger.info(f"Analysis complete - extracted {len(citations)} citations")
+            
+            result = AgentResponse(
                 text=response.output_text,
                 citations=citations,
                 raw_response=response,
@@ -241,12 +282,34 @@ class CompanyRiskAgent:
                 tool_configuration=self.get_tool_configuration_info(market, count, freshness),
             )
             
+            # Add result attributes to span
+            if tracer and span_context:
+                current_span = trace.get_current_span()
+                current_span.set_attribute("company_analysis.citations_count", len(citations))
+                current_span.set_attribute("company_analysis.response_length", len(response.output_text) if response.output_text else 0)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error during agent analysis: {str(e)}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            # Record exception in span
+            if tracer and span_context:
+                current_span = trace.get_current_span()
+                current_span.record_exception(e)
+                current_span.set_status(trace.StatusCode.ERROR, str(e))
+            raise
+            
         finally:
             # Clean up the agent version
+            logger.debug(f"Cleaning up agent version: {agent.name} v{agent.version}")
             self._project_client.agents.delete_version(
                 agent_name=agent.name, 
                 agent_version=agent.version
             )
+            # Close span
+            if span_context:
+                span_context.__exit__(None, None, None)
             
     async def analyze_company_streaming(
         self,

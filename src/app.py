@@ -12,8 +12,19 @@ import sys
 import asyncio
 import json
 import requests
+import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -21,15 +32,98 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 from dotenv import load_dotenv
 
+# CRITICAL: st.set_page_config() must be the first Streamlit command
+# It must be called before any other st.* functions
+st.set_page_config(
+    page_title="Company Risk Analysis - Bing Grounding PoC",
+    page_icon="🏢",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Load environment variables first
+load_dotenv()
+
+# Initialize OpenTelemetry tracing with Azure Monitor
+def setup_tracing():
+    """Configure OpenTelemetry tracing with Azure Monitor using Foundry project telemetry"""
+    try:
+        from azure.ai.projects import AIProjectClient
+        from azure.identity import DefaultAzureCredential
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        from azure.ai.projects.telemetry import AIProjectInstrumentor
+        
+        # Get connection string from Foundry project
+        project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+        if not project_endpoint:
+            logger.warning("AZURE_AI_PROJECT_ENDPOINT not set - tracing disabled")
+            return False
+        
+        project_client = AIProjectClient(
+            credential=DefaultAzureCredential(),
+            endpoint=project_endpoint,
+        )
+        
+        # Get Application Insights connection string from the project
+        connection_string = project_client.telemetry.get_application_insights_connection_string()
+        
+        if not connection_string:
+            logger.warning("No Application Insights connected to project - tracing disabled")
+            return False
+        
+        # Enable content recording for debugging (disable in production)
+        os.environ["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"] = "true"
+        
+        # Configure Azure Monitor with Application Insights
+        configure_azure_monitor(
+            connection_string=connection_string,
+            enable_live_metrics=True
+        )
+        
+        # Enable Azure AI Projects instrumentation
+        AIProjectInstrumentor().instrument()
+        
+        logger.info("OpenTelemetry tracing configured successfully from Foundry project")
+        return True
+    except ImportError as e:
+        logger.warning(f"Tracing packages not installed: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Failed to configure tracing (App Insights may not be linked to project): {e}")
+        return False
+
+# Initialize tracing early
+tracing_enabled = setup_tracing()
+
+logger.info("Loading configuration modules...")
 from config import AzureConfig, MARKET_OPTIONS, RISK_CATEGORIES
 from agent import CompanyRiskAgent, get_company_risk_analysis_prompt
+logger.info("Configuration modules loaded successfully")
 
-# Load environment variables
-load_dotenv()
+logger.info(f"Environment loaded. Project endpoint: {os.getenv('AZURE_AI_PROJECT_ENDPOINT', 'NOT SET')[:50]}...")
+logger.info(f"Tracing enabled: {tracing_enabled}")
 
 # MCP Server Configuration
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp")
 MCP_SERVER_KEY = os.getenv("MCP_SERVER_KEY", "")
+
+
+def render_mermaid(mermaid_code: str, height: int = 400):
+    """Render a Mermaid diagram using streamlit components"""
+    import base64
+    
+    # Clean up the mermaid code
+    mermaid_code = mermaid_code.strip()
+    
+    # Encode the mermaid code for the URL
+    graphbytes = mermaid_code.encode("utf-8")
+    base64_bytes = base64.b64encode(graphbytes)
+    base64_string = base64_bytes.decode("ascii")
+    
+    # Use mermaid.ink service to render the diagram
+    img_url = f"https://mermaid.ink/img/{base64_string}"
+    
+    st.image(img_url, use_container_width=True)
 
 
 def init_session_state():
@@ -285,12 +379,21 @@ def run_analysis(config: AzureConfig, company_name: str, market: str, count: int
             
             # Run analysis (using asyncio)
             async def do_analysis():
-                return await agent.analyze_company(
-                    prompt=prompt,
-                    market=market,
-                    count=count,
-                    freshness=freshness,
-                )
+                logger.info(f"Starting analysis for company: {company_name}, market: {market}")
+                try:
+                    result = await agent.analyze_company(
+                        prompt=prompt,
+                        market=market,
+                        count=count,
+                        freshness=freshness,
+                    )
+                    logger.info(f"Analysis completed successfully for {company_name}")
+                    return result
+                except Exception as e:
+                    import traceback
+                    logger.error(f"Error in do_analysis for {company_name}: {str(e)}")
+                    logger.error(f"Full traceback:\n{traceback.format_exc()}")
+                    raise
                 
             response = asyncio.run(do_analysis())
             
@@ -308,6 +411,10 @@ def run_analysis(config: AzureConfig, company_name: str, market: str, count: int
             st.rerun()
             
         except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"❌ Error during analysis for {company_name}: {str(e)}")
+            logger.error(f"Full exception traceback:\n{error_trace}")
             st.error(f"❌ Error during analysis: {str(e)}")
             st.exception(e)
 
@@ -356,19 +463,17 @@ BingGroundingSearchConfiguration(
 
 def main():
     """Main application entry point"""
-    st.set_page_config(
-        page_title="Company Risk Analysis - Bing Grounding PoC",
-        page_icon="🏢",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
+    logger.info("Initializing session state...")
     init_session_state()
+    logger.info("Session state initialized")
     
     # Render sidebar and get config
+    logger.info("Rendering sidebar...")
     config = render_sidebar()
+    logger.info(f"Sidebar rendered. Config valid: {st.session_state.config_valid}")
     
     # Create tabs - NEW: Added Scenario tabs
+    logger.info("Creating application tabs...")
     tab1, tab2, tab3, tab4 = st.tabs([
         "🎯 Scenario 1: Direct Agent", 
         "🔗 Scenario 2: Agent → MCP Agent",
@@ -1111,3 +1216,8 @@ bing_tool = BingGroundingAgentTool(
     }
     ```
     """)
+
+
+# Streamlit runs the script top-to-bottom on each interaction
+# We only need to call main() once at module level
+main()
