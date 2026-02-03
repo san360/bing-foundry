@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Environment files with secrets
+.env
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Azure
+.azure/
+*.tfstate
+*.tfstate.*
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

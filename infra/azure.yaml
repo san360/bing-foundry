@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: bing-foundry-company-risk
+metadata:
+  template: company-risk-analysis-bing-grounding
+
+# Hook to register Bing provider before deployment
+hooks:
+  preprovision:
+    posix:
+      shell: sh
+      run: |
+        echo "Registering Microsoft.Bing provider..."
+        az provider register --namespace 'Microsoft.Bing' --wait
+        echo "Provider registered successfully."
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Registering Microsoft.Bing provider..."
+        az provider register --namespace 'Microsoft.Bing' --wait
+        Write-Host "Provider registered successfully."
+  postprovision:
+    posix:
+      shell: sh
+      run: |
+        echo "Deployment complete!"
+        echo ""
+        echo "Next steps:"
+        echo "1. Create a Bing connection in Azure AI Foundry portal"
+        echo "2. Copy the connection name to your .env file"
+        echo "3. Run: pip install -r requirements.txt"
+        echo "4. Run: streamlit run src/app.py"
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Deployment complete!"
+        Write-Host ""
+        Write-Host "Next steps:"
+        Write-Host "1. Create a Bing connection in Azure AI Foundry portal"
+        Write-Host "2. Copy the connection name to your .env file"
+        Write-Host "3. Run: pip install -r requirements.txt"
+        Write-Host "4. Run: streamlit run src/app.py"
+
+infra:
+  provider: bicep
+  path: ./
+  module: main
+
+# No services to deploy - this is infrastructure only
