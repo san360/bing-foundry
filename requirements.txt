@@ -21,3 +21,4 @@ typing-extensions>=4.9.0
 opentelemetry-sdk>=1.25.0
 azure-monitor-opentelemetry>=1.6.0
 azure-core-tracing-opentelemetry>=1.0.0b11
+opentelemetry-instrumentation-openai-v2>=2.0.0

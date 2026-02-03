@@ -48,10 +48,21 @@ load_dotenv()
 def setup_tracing():
     """Configure OpenTelemetry tracing with Azure Monitor using Foundry project telemetry"""
     try:
+        # Avoid re-initializing tracing on Streamlit reruns
+        if os.environ.get("OTEL_CONFIGURED") == "true":
+            logger.info("Tracing already configured; skipping re-initialization")
+            return True
+
         from azure.ai.projects import AIProjectClient
-        from azure.identity import DefaultAzureCredential
+        from azure.identity import (
+            AzureCliCredential,
+            VisualStudioCodeCredential,
+            EnvironmentCredential,
+            ManagedIdentityCredential,
+            ChainedTokenCredential,
+        )
         from azure.monitor.opentelemetry import configure_azure_monitor
-        from azure.ai.projects.telemetry import AIProjectInstrumentor
+        from azure.core.settings import settings
         
         # Get connection string from Foundry project
         project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
@@ -59,8 +70,14 @@ def setup_tracing():
             logger.warning("AZURE_AI_PROJECT_ENDPOINT not set - tracing disabled")
             return False
         
+        credential = ChainedTokenCredential(
+            EnvironmentCredential(),
+            AzureCliCredential(),
+            VisualStudioCodeCredential(),
+            ManagedIdentityCredential(),
+        )
         project_client = AIProjectClient(
-            credential=DefaultAzureCredential(),
+            credential=credential,
             endpoint=project_endpoint,
         )
         
@@ -71,8 +88,15 @@ def setup_tracing():
             logger.warning("No Application Insights connected to project - tracing disabled")
             return False
         
+        logger.info(f"Retrieved Application Insights connection string from project")
+        
         # Enable content recording for debugging (disable in production)
+        # This captures prompts and responses in traces
         os.environ["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"] = "true"
+        os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true"
+        
+        # Enable Azure SDK tracing with OpenTelemetry
+        settings.tracing_implementation = "opentelemetry"
         
         # Configure Azure Monitor with Application Insights
         configure_azure_monitor(
@@ -80,16 +104,30 @@ def setup_tracing():
             enable_live_metrics=True
         )
         
-        # Enable Azure AI Projects instrumentation
-        AIProjectInstrumentor().instrument()
+        # Instrument OpenAI SDK for tracing
+        try:
+            from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
+            if os.environ.get("OTEL_OPENAI_INSTRUMENTED") != "true":
+                OpenAIInstrumentor().instrument()
+                os.environ["OTEL_OPENAI_INSTRUMENTED"] = "true"
+                logger.info("OpenAI SDK instrumentation enabled")
+            else:
+                logger.info("OpenAI SDK already instrumented; skipping")
+        except ImportError as e:
+            logger.warning(
+                f"opentelemetry-instrumentation-openai-v2 not installed - OpenAI calls won't be traced: {e}"
+            )
         
-        logger.info("OpenTelemetry tracing configured successfully from Foundry project")
+        os.environ["OTEL_CONFIGURED"] = "true"
+        logger.info("OpenTelemetry tracing configured successfully")
         return True
     except ImportError as e:
         logger.warning(f"Tracing packages not installed: {e}")
         return False
     except Exception as e:
-        logger.warning(f"Failed to configure tracing (App Insights may not be linked to project): {e}")
+        import traceback
+        logger.warning(f"Failed to configure tracing: {e}")
+        logger.debug(f"Tracing setup traceback: {traceback.format_exc()}")
         return False
 
 # Initialize tracing early
@@ -508,8 +546,7 @@ def render_direct_agent_scenario(config: AzureConfig):
     
     # Mermaid diagram for Scenario 1
     with st.expander("📊 Architecture Diagram (Mermaid)", expanded=True):
-        st.markdown("""
-```mermaid
+        mermaid_code = """
 sequenceDiagram
     participant U as 👤 User
     participant App as 🖥️ Streamlit App
@@ -527,8 +564,8 @@ sequenceDiagram
     Tool-->>Agent: Search results
     Agent-->>App: Analysis response
     App-->>U: Display results
-```
-        """)
+        """
+        render_mermaid(mermaid_code, height=420)
         
         st.caption("💡 The market parameter is set **at tool creation time**, before the agent processes the request.")
     
@@ -585,8 +622,7 @@ def render_mcp_agent_scenario(config: AzureConfig):
     
     # Mermaid diagram for Scenario 2
     with st.expander("📊 Architecture Diagram (Mermaid)", expanded=True):
-        st.markdown("""
-```mermaid
+        mermaid_code = """
 sequenceDiagram
     participant U as 👤 User
     participant App as 🖥️ Streamlit App
@@ -606,8 +642,8 @@ sequenceDiagram
     A2-->>MCP: Analysis response
     MCP-->>App: MCP result
     App-->>U: Display results
-```
-        """)
+        """
+        render_mermaid(mermaid_code, height=420)
         
         st.caption("💡 The market parameter is passed **as an MCP tool argument** and used to dynamically create the Bing tool.")
     
@@ -905,8 +941,8 @@ def render_documentation_tab():
     
     st.markdown("""
 ### Scenario 1: Direct Agent with Bing Tool
-
-```mermaid
+    """)
+    mermaid_s1 = """
 flowchart LR
     subgraph User["👤 User Interface"]
         A[Company Input] --> B[Market Dropdown]
@@ -932,11 +968,13 @@ flowchart LR
     
     style B fill:#90EE90
     style F fill:#90EE90
-```
+    """
+    render_mermaid(mermaid_s1, height=420)
 
+    st.markdown("""
 ### Scenario 2: Agent → MCP Server (Agent-to-Agent)
-
-```mermaid
+    """)
+    mermaid_s2 = """
 flowchart LR
     subgraph User["👤 User Interface"]
         A[Company Input] --> B[Market Dropdown]
@@ -963,8 +1001,8 @@ flowchart LR
     style B fill:#90EE90
     style E fill:#90EE90
     style F fill:#90EE90
-```
-    """)
+    """
+    render_mermaid(mermaid_s2, height=420)
     
     st.divider()
     
@@ -1024,8 +1062,8 @@ flowchart LR
     
     st.markdown("""
 ### Sequence Diagram: How Market Flows in Each Scenario
-
-```mermaid
+    """)
+    mermaid_seq1 = """
 sequenceDiagram
     box Scenario 1: Direct Agent
         participant U1 as 👤 User
@@ -1041,9 +1079,10 @@ sequenceDiagram
     B1-->>U1: German results
     
     Note over U1,B1: Market is set at TOOL CREATION
-```
+    """
+    render_mermaid(mermaid_seq1, height=360)
 
-```mermaid
+    mermaid_seq2 = """
 sequenceDiagram
     box Scenario 2: Agent → MCP Agent
         participant U2 as 👤 User
@@ -1061,8 +1100,8 @@ sequenceDiagram
     B2-->>U2: German results
     
     Note over U2,B2: Market is PASSED AS ARGUMENT then used at tool creation
-```
-    """)
+    """
+    render_mermaid(mermaid_seq2, height=360)
     
     st.divider()
     

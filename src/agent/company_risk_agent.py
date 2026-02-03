@@ -12,7 +12,14 @@ import logging
 import traceback
 from dataclasses import dataclass, field
 from typing import Optional, AsyncIterator, Any
-from azure.identity import DefaultAzureCredential
+from azure.identity import (
+    DefaultAzureCredential,
+    AzureCliCredential,
+    VisualStudioCodeCredential,
+    EnvironmentCredential,
+    ManagedIdentityCredential,
+    ChainedTokenCredential,
+)
 from azure.ai.projects import AIProjectClient
 # OpenTelemetry tracing
 try:
@@ -84,7 +91,12 @@ class CompanyRiskAgent:
     async def _ensure_initialized(self):
         """Ensure clients are initialized"""
         if self._project_client is None:
-            self._credential = DefaultAzureCredential()
+            self._credential = ChainedTokenCredential(
+                EnvironmentCredential(),
+                AzureCliCredential(),
+                VisualStudioCodeCredential(),
+                ManagedIdentityCredential(),
+            )
             self._project_client = AIProjectClient(
                 endpoint=self.project_endpoint,
                 credential=self._credential,
@@ -220,79 +232,117 @@ class CompanyRiskAgent:
                 
             await self._ensure_initialized()
         
-        # Create tool with specified market configuration
-        # THIS IS THE KEY: Market is set per-tool, per-request!
-        bing_tool = self._create_bing_tool(
-            market=market,
-            count=count,
-            freshness=freshness,
-        )
-        
-        # Create agent with this specific tool configuration
-        agent = self._project_client.agents.create_version(
-            agent_name=f"CompanyRiskAnalyst-{market or 'default'}",
-            definition=PromptAgentDefinition(
-                model=self.model_deployment_name,
-                instructions=AGENT_SYSTEM_INSTRUCTION,
-                tools=[bing_tool],
-            ),
-            description="Company risk analysis agent with Bing grounding",
-        )
-        
-        try:
-            # Execute the analysis
-            logger.info(f"Executing analysis with agent: {agent.name}")
-            logger.debug(f"Request parameters - prompt length: {len(prompt)}, market: {market}, count: {count}, freshness: {freshness}")
-            
-            response = self._openai_client.responses.create(
-                tool_choice="required",  # Force use of Bing tool
-                input=prompt,
-                extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+            # Create tool with specified market configuration
+            # THIS IS THE KEY: Market is set per-tool, per-request!
+            bing_tool = self._create_bing_tool(
+                market=market,
+                count=count,
+                freshness=freshness,
             )
             
-            logger.debug(f"Response received - output items count: {len(response.output) if response.output else 0}")
-            logger.debug(f"Response output_text length: {len(response.output_text) if response.output_text else 0}")
-            
-            # Extract citations
-            citations = []
-            for idx, item in enumerate(response.output):
-                logger.debug(f"Processing output item {idx}: type={type(item).__name__}, has_content={hasattr(item, 'content')}")
-                if hasattr(item, 'content'):
-                    logger.debug(f"  Item {idx} content: {type(item.content).__name__ if item.content else 'None'}, value={item.content}")
-                if hasattr(item, 'content') and item.content is not None:
-                    for content_idx, content in enumerate(item.content):
-                        logger.debug(f"    Content {content_idx}: type={type(content).__name__}, has_annotations={hasattr(content, 'annotations')}")
-                        if hasattr(content, 'annotations') and content.annotations is not None:
-                            for annotation in content.annotations:
-                                if hasattr(annotation, 'url'):
-                                    citations.append({
-                                        "url": annotation.url,
-                                        "title": getattr(annotation, 'title', ''),
-                                        "start_index": getattr(annotation, 'start_index', 0),
-                                        "end_index": getattr(annotation, 'end_index', 0),
-                                    })
-            
-            logger.info(f"Analysis complete - extracted {len(citations)} citations")
-            
-            result = AgentResponse(
-                text=response.output_text,
-                citations=citations,
-                raw_response=response,
-                market_used=market,
-                tool_configuration=self.get_tool_configuration_info(market, count, freshness),
+            # Create agent with this specific tool configuration
+            agent = self._project_client.agents.create_version(
+                agent_name=f"CompanyRiskAnalyst-{market or 'default'}",
+                definition=PromptAgentDefinition(
+                    model=self.model_deployment_name,
+                    instructions=AGENT_SYSTEM_INSTRUCTION,
+                    tools=[bing_tool],
+                ),
+                description="Company risk analysis agent with Bing grounding",
             )
             
-            # Add result attributes to span
-            if tracer and span_context:
-                current_span = trace.get_current_span()
-                current_span.set_attribute("company_analysis.citations_count", len(citations))
-                current_span.set_attribute("company_analysis.response_length", len(response.output_text) if response.output_text else 0)
+            try:
+                # Execute the analysis
+                logger.info(f"Executing analysis with agent: {agent.name}")
+                logger.debug(
+                    "Request parameters - prompt length: %s, market: %s, count: %s, freshness: %s",
+                    len(prompt),
+                    market,
+                    count,
+                    freshness,
+                )
+                
+                response = self._openai_client.responses.create(
+                    tool_choice="required",  # Force use of Bing tool
+                    input=prompt,
+                    extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+                )
+                
+                logger.debug(
+                    "Response received - output items count: %s",
+                    len(response.output) if response.output else 0,
+                )
+                logger.debug(
+                    "Response output_text length: %s",
+                    len(response.output_text) if response.output_text else 0,
+                )
+                
+                # Extract citations
+                citations = []
+                for idx, item in enumerate(response.output):
+                    logger.debug(
+                        "Processing output item %s: type=%s, has_content=%s",
+                        idx,
+                        type(item).__name__,
+                        hasattr(item, 'content'),
+                    )
+                    if hasattr(item, 'content'):
+                        logger.debug(
+                            "  Item %s content: %s, value=%s",
+                            idx,
+                            type(item.content).__name__ if item.content else 'None',
+                            item.content,
+                        )
+                    if hasattr(item, 'content') and item.content is not None:
+                        for content_idx, content in enumerate(item.content):
+                            logger.debug(
+                                "    Content %s: type=%s, has_annotations=%s",
+                                content_idx,
+                                type(content).__name__,
+                                hasattr(content, 'annotations'),
+                            )
+                            if hasattr(content, 'annotations') and content.annotations is not None:
+                                for annotation in content.annotations:
+                                    if hasattr(annotation, 'url'):
+                                        citations.append({
+                                            "url": annotation.url,
+                                            "title": getattr(annotation, 'title', ''),
+                                            "start_index": getattr(annotation, 'start_index', 0),
+                                            "end_index": getattr(annotation, 'end_index', 0),
+                                        })
             
-            return result
+                logger.info(f"Analysis complete - extracted {len(citations)} citations")
+                
+                result = AgentResponse(
+                    text=response.output_text,
+                    citations=citations,
+                    raw_response=response,
+                    market_used=market,
+                    tool_configuration=self.get_tool_configuration_info(market, count, freshness),
+                )
+                
+                # Add result attributes to span
+                if tracer and span_context:
+                    current_span = trace.get_current_span()
+                    current_span.set_attribute("company_analysis.citations_count", len(citations))
+                    current_span.set_attribute("company_analysis.response_length", len(response.output_text) if response.output_text else 0)
+                
+                return result
             
+            except Exception as e:
+                logger.error(f"Error during agent analysis: {str(e)}")
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
+                raise
+                
+            finally:
+                # Clean up the agent version
+                logger.debug(f"Cleaning up agent version: {agent.name} v{agent.version}")
+                self._project_client.agents.delete_version(
+                    agent_name=agent.name, 
+                    agent_version=agent.version
+                )
+                
         except Exception as e:
-            logger.error(f"Error during agent analysis: {str(e)}")
-            logger.error(f"Full traceback:\n{traceback.format_exc()}")
             # Record exception in span
             if tracer and span_context:
                 current_span = trace.get_current_span()
@@ -301,12 +351,6 @@ class CompanyRiskAgent:
             raise
             
         finally:
-            # Clean up the agent version
-            logger.debug(f"Cleaning up agent version: {agent.name} v{agent.version}")
-            self._project_client.agents.delete_version(
-                agent_name=agent.name, 
-                agent_version=agent.version
-            )
             # Close span
             if span_context:
                 span_context.__exit__(None, None, None)

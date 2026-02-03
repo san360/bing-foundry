@@ -24,17 +24,30 @@ from mcp.types import (
     CallToolResult,
 )
 
-from azure.identity import DefaultAzureCredential
+from azure.identity import (
+    DefaultAzureCredential,
+    AzureCliCredential,
+    VisualStudioCodeCredential,
+    EnvironmentCredential,
+    ManagedIdentityCredential,
+    ChainedTokenCredential,
+)
 from azure.ai.projects import AIProjectClient
+
+# OpenTelemetry tracing
+try:
+    from opentelemetry import trace
+except ImportError:
+    trace = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuration
-PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT", "")
-BING_CONNECTION_NAME = os.getenv("BING_CONNECTION_NAME", "")
-MODEL_DEPLOYMENT_NAME = os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-4o")
+# Configuration - Support both naming conventions
+PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("PROJECT_ENDPOINT", "")
+BING_CONNECTION_NAME = os.getenv("BING_PROJECT_CONNECTION_NAME") or os.getenv("BING_CONNECTION_NAME", "")
+MODEL_DEPLOYMENT_NAME = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME") or os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
 # Supported markets
 SUPPORTED_MARKETS = [
@@ -49,12 +62,75 @@ SUPPORTED_MARKETS = [
 server = Server("bing-grounding-mcp")
 
 
+def setup_tracing() -> None:
+    """Configure OpenTelemetry tracing for MCP server."""
+    if os.environ.get("OTEL_CONFIGURED") == "true":
+        return
+
+    if not PROJECT_ENDPOINT:
+        logger.warning("PROJECT_ENDPOINT not set - tracing disabled")
+        return
+
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        from azure.core.settings import settings
+
+        credential = ChainedTokenCredential(
+            EnvironmentCredential(),
+            AzureCliCredential(),
+            VisualStudioCodeCredential(),
+            ManagedIdentityCredential(),
+        )
+        project_client = AIProjectClient(
+            credential=credential,
+            endpoint=PROJECT_ENDPOINT,
+        )
+
+        connection_string = project_client.telemetry.get_application_insights_connection_string()
+        if not connection_string:
+            logger.warning("No Application Insights connected to project - tracing disabled")
+            return
+
+        os.environ["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"] = "true"
+        os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true"
+
+        settings.tracing_implementation = "opentelemetry"
+        configure_azure_monitor(connection_string=connection_string, enable_live_metrics=True)
+
+        try:
+            from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
+            if os.environ.get("OTEL_OPENAI_INSTRUMENTED") != "true":
+                OpenAIInstrumentor().instrument()
+                os.environ["OTEL_OPENAI_INSTRUMENTED"] = "true"
+        except ImportError as e:
+            logger.warning(
+                f"opentelemetry-instrumentation-openai-v2 not installed - OpenAI calls won't be traced: {e}"
+            )
+
+        os.environ["OTEL_CONFIGURED"] = "true"
+        logger.info("OpenTelemetry tracing configured for MCP server")
+    except Exception as e:
+        logger.warning(f"Failed to configure tracing for MCP server: {e}")
+
+
+def get_tracer():
+    if trace is None:
+        return None
+    return trace.get_tracer("mcp-server")
+
+
 def get_ai_project_client() -> AIProjectClient:
     """Get authenticated AI Project client."""
     if not PROJECT_ENDPOINT:
         raise ValueError("PROJECT_ENDPOINT environment variable not set")
-    
-    credential = DefaultAzureCredential()
+
+    # Prefer local dev credentials to avoid noisy DefaultAzureCredential errors
+    credential = ChainedTokenCredential(
+        EnvironmentCredential(),
+        AzureCliCredential(),
+        VisualStudioCodeCredential(),
+        ManagedIdentityCredential(),
+    )
     return AIProjectClient(
         endpoint=PROJECT_ENDPOINT,
         credential=credential
@@ -66,71 +142,85 @@ async def perform_bing_search(query: str, market: str = "en-US") -> dict:
     Perform a Bing grounded search using the AI Foundry agent.
     """
     try:
+        tracer = get_tracer()
         if market not in SUPPORTED_MARKETS:
             market = "en-US"
             logger.warning(f"Invalid market code, defaulting to en-US")
         
+        span_cm = (
+            tracer.start_as_current_span(
+                "mcp.bing_grounded_search",
+                attributes={
+                    "mcp.market": market,
+                    "mcp.query_length": len(query),
+                },
+            )
+            if tracer
+            else None
+        )
+
+        if span_cm:
+            span_cm.__enter__()
+
         client = get_ai_project_client()
-        agents_client = client.agents
-        
-        from azure.ai.agents.models import BingGroundingTool, BingGroundingSearchConfiguration
-        
-        bing_tool = BingGroundingTool(
-            bing_grounding_search=BingGroundingSearchConfiguration(
-                connection_id=BING_CONNECTION_NAME,
-                market=market
+        openai_client = client.get_openai_client()
+
+        from azure.ai.projects.models import (
+            PromptAgentDefinition,
+            BingGroundingAgentTool,
+            BingGroundingSearchConfiguration,
+            BingGroundingSearchToolParameters,
+        )
+
+        bing_connection = client.connections.get(BING_CONNECTION_NAME)
+        bing_tool = BingGroundingAgentTool(
+            bing_grounding=BingGroundingSearchToolParameters(
+                search_configurations=[
+                    BingGroundingSearchConfiguration(
+                        project_connection_id=bing_connection.id,
+                        market=market,
+                    )
+                ]
             )
         )
-        
-        agent = agents_client.create_agent(
-            model=MODEL_DEPLOYMENT_NAME,
-            name="bing-search-agent",
-            instructions="You are a search assistant. Perform web searches and return comprehensive, factual results.",
-            tools=bing_tool.definitions
+
+        agent = client.agents.create_version(
+            agent_name=f"bing-search-agent-{market}",
+            definition=PromptAgentDefinition(
+                model=MODEL_DEPLOYMENT_NAME,
+                instructions=(
+                    "You are a search assistant. Perform web searches and return comprehensive, factual results."
+                ),
+                tools=[bing_tool],
+            ),
+            description="Bing search agent for MCP server",
         )
-        
+
         try:
-            thread = agents_client.threads.create()
-            
-            agents_client.messages.create(
-                thread_id=thread.id,
-                role="user",
-                content=query
+            response = openai_client.responses.create(
+                tool_choice="required",
+                input=query,
+                extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
             )
-            
-            run = agents_client.runs.create_and_process(
-                thread_id=thread.id,
-                agent_id=agent.id
-            )
-            
-            messages = agents_client.messages.list(thread_id=thread.id)
-            
+
             result = {
                 "query": query,
                 "market": market,
-                "status": run.status,
-                "results": []
+                "status": "completed",
+                "results": [],
             }
-            
-            for msg in messages:
-                if msg.role == "assistant" and msg.text_messages:
-                    for text_msg in msg.text_messages:
-                        result["results"].append({
-                            "content": text_msg.text.value,
-                            "annotations": [
-                                {
-                                    "type": getattr(ann, "type", "unknown"),
-                                    "url": getattr(ann, "url", None),
-                                    "title": getattr(ann, "title", None)
-                                }
-                                for ann in getattr(text_msg.text, "annotations", [])
-                            ]
-                        })
-            
+
+            if response.output_text:
+                result["results"].append({"content": response.output_text})
+
             return result
-            
         finally:
-            agents_client.delete_agent(agent.id)
+            client.agents.delete_version(
+                agent_name=agent.name,
+                agent_version=agent.version,
+            )
+            if span_cm:
+                span_cm.__exit__(None, None, None)
             
     except Exception as e:
         logger.error(f"Bing search error: {e}")
@@ -144,6 +234,22 @@ async def perform_bing_search(query: str, market: str = "en-US") -> dict:
 
 async def analyze_company_risk(company_name: str, risk_category: str, market: str = "en-US") -> dict:
     """Analyze company risks using Bing grounded search."""
+    tracer = get_tracer()
+    span_cm = (
+        tracer.start_as_current_span(
+            "mcp.analyze_company_risk",
+            attributes={
+                "mcp.company_name": company_name,
+                "mcp.risk_category": risk_category,
+                "mcp.market": market,
+            },
+        )
+        if tracer
+        else None
+    )
+    if span_cm:
+        span_cm.__enter__()
+
     queries = {
         "litigation": f"{company_name} lawsuits legal cases court filings settlements",
         "labor_practices": f"{company_name} labor violations employee complaints working conditions child labor",
@@ -174,6 +280,9 @@ async def analyze_company_risk(company_name: str, risk_category: str, market: st
             "status": "error",
             "error": str(e)
         }
+    finally:
+        if span_cm:
+            span_cm.__exit__(None, None, None)
 
 
 # ============================================================================
@@ -253,6 +362,19 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Handle tool calls."""
     logger.info(f"Tool called: {name} with arguments: {arguments}")
+    tracer = get_tracer()
+    span_cm = (
+        tracer.start_as_current_span(
+            "mcp.tool_call",
+            attributes={
+                "mcp.tool_name": name,
+            },
+        )
+        if tracer
+        else None
+    )
+    if span_cm:
+        span_cm.__enter__()
     
     try:
         if name == "bing_grounded_search":
@@ -303,12 +425,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     except Exception as e:
         logger.error(f"Error in tool {name}: {e}")
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
+    finally:
+        if span_cm:
+            span_cm.__exit__(None, None, None)
 
 
 async def main():
     """Run the MCP server."""
     logger.info("Starting Bing Grounding MCP Server...")
     logger.info(f"Project Endpoint: {PROJECT_ENDPOINT[:50]}..." if PROJECT_ENDPOINT else "PROJECT_ENDPOINT not set")
+    setup_tracing()
     
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
