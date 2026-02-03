@@ -1,0 +1,6 @@
+# MCP Server Local - Python SDK based
+mcp>=1.0.0
+azure-identity>=1.15.0
+azure-ai-projects>=1.0.0b5
+azure-ai-agents>=1.0.0
+python-dotenv>=1.0.0

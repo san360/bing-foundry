@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "PROJECT_ENDPOINT": "https://your-ai-foundry-project.cognitiveservices.azure.com",
+    "BING_CONNECTION_NAME": "your-bing-connection-name",
+    "MODEL_DEPLOYMENT_NAME": "gpt-4o"
+  }
+}

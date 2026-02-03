@@ -1,0 +1,32 @@
+# Bing Grounding MCP Server - HTTP Transport Docker Image
+# 
+# Build: docker build -f Dockerfile.http -t bing-mcp-server-http .
+# Run: docker run -p 8000:8000 --env-file .env bing-mcp-server-http
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements-http.txt .
+RUN pip install --no-cache-dir -r requirements-http.txt
+
+# Copy application code
+COPY mcp_server_http.py .
+COPY .env.example .
+
+# Environment variables (override at runtime)
+ENV PROJECT_ENDPOINT=""
+ENV BING_CONNECTION_NAME=""
+ENV MODEL_DEPLOYMENT_NAME="gpt-4o"
+ENV PORT=8000
+
+# Expose port for HTTP transport
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the HTTP MCP server
+CMD ["python", "mcp_server_http.py"]

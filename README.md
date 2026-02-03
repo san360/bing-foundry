@@ -65,11 +65,7 @@ bing-foundry/
 ├── infra/                          # Infrastructure as Code
 │   ├── main.bicep                  # Main Bicep template
 │   ├── main.bicepparam             # Parameters file
-│   ├── modules/
-│   │   ├── ai-services.bicep       # AI Services account
-│   │   ├── bing-grounding.bicep    # Bing Grounding resource
-│   │   └── connections.bicep       # Project connections
-│   └── azure.yaml                  # azd configuration
+│   └── modules/                    # Bicep modules
 ├── src/
 │   ├── agent/
 │   │   ├── __init__.py
@@ -77,6 +73,19 @@ bing-foundry/
 │   │   └── prompts.py              # Pre-baked prompts
 │   ├── app.py                      # Streamlit UI
 │   └── config.py                   # Configuration
+├── mcp-server/                     # 🆕 MCP Server (Azure Functions)
+│   ├── function_app.py             # MCP tools implementation
+│   ├── host.json                   # MCP extension config
+│   ├── requirements.txt
+│   ├── infra/                      # Deployment infrastructure
+│   └── README.md                   # MCP server documentation
+├── mcp-server-local/               # 🆕 MCP Server (Local/Docker)
+│   ├── mcp_server.py               # stdio transport
+│   ├── mcp_server_http.py          # HTTP transport
+│   ├── Dockerfile                  # Container image
+│   └── Dockerfile.http             # HTTP server image
+├── .vscode/
+│   └── mcp.json                    # 🆕 VS Code MCP configuration
 ├── requirements.txt
 ├── .env.example
 └── README.md
@@ -247,6 +256,77 @@ This solution uses **Azure AI Foundry** (formerly Azure AI Studio) for agent dep
 - [Market Codes Reference](https://learn.microsoft.com/en-us/bing/search-apis/bing-web-search/reference/market-codes)
 - [Azure AI Foundry Agents](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/)
 - [AI Projects Python SDK](https://learn.microsoft.com/en-us/python/api/overview/azure/ai-projects-readme)
+
+---
+
+## 🔌 MCP Server Integration
+
+This project includes an **MCP (Model Context Protocol) server** that wraps the Bing Grounding functionality as reusable tools. This allows AI agents (like GitHub Copilot) to use Bing search with custom market parameters.
+
+### Why MCP?
+
+- **Standardized Interface**: MCP provides a protocol for AI agents to discover and use tools
+- **Runtime Flexibility**: Pass market parameter at invocation time
+- **Multiple Deployment Options**: Local, Docker, or Azure Functions
+
+### Deployment Options
+
+| Option | Transport | Use Case | Endpoint |
+|--------|-----------|----------|----------|
+| **Azure Functions** | HTTP Streamable | Production | `/runtime/webhooks/mcp` |
+| **Local Docker** | HTTP | Development | `localhost:8000/mcp` |
+| **Local Python** | stdio | VS Code testing | N/A (stdin/stdout) |
+| **Azure Container Apps** | HTTP | Full control | Custom endpoint |
+
+### Quick Start - Azure Functions
+
+```bash
+cd mcp-server
+azd up
+```
+
+### Quick Start - Local Docker
+
+```bash
+cd mcp-server-local
+docker build -f Dockerfile.http -t bing-mcp-server .
+docker run -p 8000:8000 --env-file .env bing-mcp-server
+```
+
+### VS Code Integration
+
+Configure in `.vscode/mcp.json` to use with GitHub Copilot:
+
+```json
+{
+    "servers": {
+        "bing-mcp": {
+            "type": "http",
+            "url": "https://<function-app>.azurewebsites.net/runtime/webhooks/mcp",
+            "headers": {
+                "x-functions-key": "<your-mcp-extension-key>"
+            }
+        }
+    }
+}
+```
+
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `bing_grounded_search` | Web search with market parameter |
+| `analyze_company_risk` | Insurance risk analysis by category |
+| `list_supported_markets` | List available market codes |
+
+**Example Usage in Copilot:**
+```
+@workspace Search for "Tesla lawsuits 2024" using market de-DE with the Bing tool
+```
+
+For detailed MCP documentation, see [mcp-server/README.md](mcp-server/README.md).
+
+---
 
 ## 📜 License
 

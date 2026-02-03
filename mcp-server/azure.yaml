@@ -1,0 +1,6 @@
+name: bing-mcp-server
+services:
+  api:
+    project: .
+    host: function
+    language: python

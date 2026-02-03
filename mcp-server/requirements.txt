@@ -1,0 +1,5 @@
+# Azure Functions MCP Server Dependencies
+azure-functions>=1.24.0
+azure-identity>=1.15.0
+azure-ai-projects>=1.0.0b5
+azure-ai-agents>=1.0.0
