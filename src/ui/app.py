@@ -21,6 +21,8 @@ logging.getLogger('azure').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('azure.core.pipeline').setLevel(logging.ERROR)
+logging.getLogger('azure.core.pipeline.policies.http_logging_policy').setLevel(logging.ERROR)
+logging.getLogger('azure.monitor.opentelemetry.exporter').setLevel(logging.WARNING)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))

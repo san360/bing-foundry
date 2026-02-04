@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger('azure').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('azure.core.pipeline').setLevel(logging.ERROR)
+logging.getLogger('azure.core.pipeline.policies.http_logging_policy').setLevel(logging.ERROR)
 
 # Configuration - Support both naming conventions
 PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("PROJECT_ENDPOINT", "")
