@@ -1,13 +1,21 @@
 """
 Scenario 2 UI page: MCP Agent to Agent.
 """
+import sys
+from pathlib import Path
+
+# Add src to path
+src_path = Path(__file__).parent.parent.parent
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
 import streamlit as st
 import asyncio
 import datetime
-from infrastructure import AzureConfig, AzureClientFactory, MCPConfig, MARKET_OPTIONS
-from services import RiskAnalyzer
-from scenarios import MCPAgentScenario
-from core.models import CompanyRiskRequest, SearchConfig, RiskCategory, ScenarioType
+from src.infrastructure import AzureConfig, AzureClientFactory, MCPConfig, MARKET_OPTIONS
+from src.services import RiskAnalyzer
+from src.scenarios import MCPAgentScenario
+from src.core.models import CompanyRiskRequest, SearchConfig, RiskCategory, ScenarioType
 
 
 def render_scenario2(config: AzureConfig):
