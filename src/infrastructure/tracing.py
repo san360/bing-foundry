@@ -74,6 +74,11 @@ def setup_tracing() -> bool:
             enable_live_metrics=True
         )
         
+        # Silence noisy loggers immediately after configure_azure_monitor
+        logging.getLogger('azure.core.pipeline.policies.http_logging_policy').setLevel(logging.ERROR)
+        logging.getLogger('azure.monitor.opentelemetry.exporter').setLevel(logging.WARNING)
+        logging.getLogger('azure.monitor.opentelemetry.exporter.export._base').setLevel(logging.WARNING)
+        
         # Instrument OpenAI SDK
         try:
             from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor

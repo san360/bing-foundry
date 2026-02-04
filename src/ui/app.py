@@ -74,11 +74,14 @@ def main():
     
     # Initialize session state
     init_session_state()
+    logger.info("Session state initialized")
     
     # Render sidebar and get config
     config = render_sidebar()
+    logger.info("Sidebar rendered")
     
     # Main content area with tabs
+    logger.info("Creating tabs...")
     tab1, tab2, tab3, tab4 = st.tabs([
         "🎯 Scenario 1: Direct Agent",
         "🔗 Scenario 2: MCP Agent→Agent",
@@ -86,6 +89,7 @@ def main():
         "📖 Documentation"
     ])
     
+    logger.info("Rendering tab content...")
     with tab1:
         render_scenario1(config)
     
@@ -97,6 +101,8 @@ def main():
     
     with tab4:
         render_documentation()
+    
+    logger.info("Application rendering complete")
 
 
 if __name__ == "__main__":
