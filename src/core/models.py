@@ -24,6 +24,16 @@ class ScenarioType(Enum):
     DIRECT_AGENT = "direct_agent"
     MCP_AGENT_TO_AGENT = "mcp_agent_to_agent"
     MCP_REST_API = "mcp_rest_api"
+    WORKFLOW_MULTI_MARKET = "workflow_multi_market"
+
+
+class MarketSearchStatus(Enum):
+    """Status of a market search operation."""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    SUCCESS = "success"
+    TIMEOUT = "timeout"
+    ERROR = "error"
 
 
 @dataclass
@@ -81,3 +91,35 @@ class AnalysisResult:
     citations: List[Dict[str, Any]]
     tool_config: Dict[str, Any]
     scenario_type: ScenarioType
+
+
+@dataclass
+class MarketSearchResult:
+    """Result from a single market search in parallel workflow."""
+    market: str
+    status: MarketSearchStatus
+    text: str
+    citations: List[Citation] = field(default_factory=list)
+    execution_time_ms: int = 0
+    error_message: Optional[str] = None
+
+
+@dataclass
+class AggregatedMarketResults:
+    """Consolidated results from all markets in workflow."""
+    successful_markets: List[str] = field(default_factory=list)
+    failed_markets: List[str] = field(default_factory=list)
+    results: List[MarketSearchResult] = field(default_factory=list)
+    total_citations: List[Citation] = field(default_factory=list)
+    total_execution_time_ms: int = 0
+
+
+@dataclass
+class WorkflowExecutionMetadata:
+    """Metadata about workflow execution for tracing and reporting."""
+    total_markets: int
+    successful_count: int
+    failed_count: int
+    total_execution_time_ms: int
+    parallel_execution: bool = True
+    market_results: List[Dict[str, Any]] = field(default_factory=list)

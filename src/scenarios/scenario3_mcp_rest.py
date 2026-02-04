@@ -160,19 +160,55 @@ IMPORTANT: You must call the tool for EVERY request. Never skip the tool call.""
                 
                 logger.info(f"✅ Received response from agent {agent.name}")
                 
-                # Extract citations
+                # Extract citations - handles both annotation format and MCP JSON format
+                import json
                 citations = []
+                seen_urls = set()  # Deduplicate
+                
                 if hasattr(response, 'output') and response.output:
                     for output_item in response.output:
                         if hasattr(output_item, 'content'):
                             for content in output_item.content:
-                                if hasattr(content, 'annotations'):
+                                # Method 1: URL annotations
+                                if hasattr(content, 'annotations') and content.annotations:
                                     for annotation in content.annotations:
-                                        if hasattr(annotation, 'url'):
-                                            citations.append(Citation(
-                                                url=annotation.url,
-                                                title=getattr(annotation, 'title', annotation.url),
-                                            ))
+                                        if hasattr(annotation, 'url') and annotation.url:
+                                            if annotation.url not in seen_urls:
+                                                seen_urls.add(annotation.url)
+                                                citations.append(Citation(
+                                                    url=annotation.url,
+                                                    title=getattr(annotation, 'title', annotation.url),
+                                                ))
+                                
+                                # Method 2: Parse MCP tool JSON output
+                                if hasattr(content, 'text') and content.text:
+                                    try:
+                                        data = json.loads(content.text)
+                                        if isinstance(data, dict):
+                                            # Direct citations array
+                                            if 'citations' in data and isinstance(data['citations'], list):
+                                                for cit in data['citations']:
+                                                    url = cit.get('url', '')
+                                                    if url and url not in seen_urls:
+                                                        seen_urls.add(url)
+                                                        citations.append(Citation(
+                                                            url=url,
+                                                            title=cit.get('title', url),
+                                                        ))
+                                            # Nested in search_results
+                                            if 'search_results' in data and isinstance(data['search_results'], dict):
+                                                sr = data['search_results']
+                                                if 'citations' in sr and isinstance(sr['citations'], list):
+                                                    for cit in sr['citations']:
+                                                        url = cit.get('url', '')
+                                                        if url and url not in seen_urls:
+                                                            seen_urls.add(url)
+                                                            citations.append(Citation(
+                                                                url=url,
+                                                                title=cit.get('title', url),
+                                                            ))
+                                    except (json.JSONDecodeError, TypeError):
+                                        pass
                 
                 span.set_attribute("citations.count", len(citations))
                 

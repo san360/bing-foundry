@@ -242,17 +242,82 @@ After receiving results from ALL {len(markets)} markets, provide your analysis i
 BEGIN: Make your {len(markets)} tool calls now, starting with market=\"{markets[0]}\"."""
     
     def _extract_citations(self, response) -> List[Citation]:
-        """Extract citations from response."""
+        """
+        Extract citations from response.
+        
+        Handles two citation formats:
+        1. URL annotations in response output (from Bing grounding tool directly)
+        2. Citations embedded in MCP tool JSON responses
+        """
+        import json
         citations = []
+        seen_urls = set()  # Deduplicate citations by URL
+        
         if hasattr(response, 'output') and response.output:
             for output_item in response.output:
+                # Method 1: Extract from annotations (Bing grounding direct)
                 if hasattr(output_item, 'content'):
                     for content in output_item.content:
-                        if hasattr(content, 'annotations'):
+                        if hasattr(content, 'annotations') and content.annotations:
                             for annotation in content.annotations:
-                                if hasattr(annotation, 'url'):
-                                    citations.append(Citation(
-                                        url=annotation.url,
-                                        title=getattr(annotation, 'title', annotation.url),
-                                    ))
+                                if hasattr(annotation, 'url') and annotation.url:
+                                    if annotation.url not in seen_urls:
+                                        seen_urls.add(annotation.url)
+                                        citations.append(Citation(
+                                            url=annotation.url,
+                                            title=getattr(annotation, 'title', annotation.url),
+                                        ))
+                        
+                        # Method 2: Parse JSON from MCP tool output
+                        if hasattr(content, 'text') and content.text:
+                            try:
+                                # Try to parse as JSON (MCP tool returns JSON)
+                                data = json.loads(content.text)
+                                
+                                # Extract citations from MCP response format
+                                if isinstance(data, dict):
+                                    # Direct citations array
+                                    if 'citations' in data and isinstance(data['citations'], list):
+                                        for cit in data['citations']:
+                                            url = cit.get('url', '')
+                                            if url and url not in seen_urls:
+                                                seen_urls.add(url)
+                                                citations.append(Citation(
+                                                    url=url,
+                                                    title=cit.get('title', url),
+                                                ))
+                                    
+                                    # Nested in search_results
+                                    if 'search_results' in data and isinstance(data['search_results'], dict):
+                                        sr = data['search_results']
+                                        if 'citations' in sr and isinstance(sr['citations'], list):
+                                            for cit in sr['citations']:
+                                                url = cit.get('url', '')
+                                                if url and url not in seen_urls:
+                                                    seen_urls.add(url)
+                                                    citations.append(Citation(
+                                                        url=url,
+                                                        title=cit.get('title', url),
+                                                    ))
+                            except (json.JSONDecodeError, TypeError):
+                                # Not JSON, skip
+                                pass
+                
+                # Method 3: Check for tool call responses with embedded citations
+                if hasattr(output_item, 'type') and output_item.type == 'mcp_call':
+                    if hasattr(output_item, 'output') and output_item.output:
+                        try:
+                            data = json.loads(output_item.output) if isinstance(output_item.output, str) else output_item.output
+                            if isinstance(data, dict) and 'citations' in data:
+                                for cit in data['citations']:
+                                    url = cit.get('url', '')
+                                    if url and url not in seen_urls:
+                                        seen_urls.add(url)
+                                        citations.append(Citation(
+                                            url=url,
+                                            title=cit.get('title', url),
+                                        ))
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+        
         return citations

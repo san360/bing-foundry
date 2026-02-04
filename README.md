@@ -10,47 +10,242 @@ The application analyzes companies for:
 - Negative news coverage (child labor, environmental issues, etc.)
 - Overall risk profile assessment
 
-## 🏗️ Two Scenarios for Market Parameter Testing
+## 🏗️ Five Scenarios for Bing Grounding Integration
 
-This PoC demonstrates **two architectures** for passing the market parameter to Bing Grounding:
+This PoC demonstrates **five different architectures** for integrating Bing Grounding with AI Agents:
+
+---
 
 ### Scenario 1: Direct Agent with Bing Tool
 
-User explicitly selects market from dropdown → Tool is configured with that market → Agent uses tool
+**Architecture**: User → Agent (Bing Tool Attached) → Bing API → Results
+
+The simplest pattern where the Bing Grounding tool is directly attached to the agent at creation time.
 
 ```mermaid
 sequenceDiagram
     participant U as 👤 User
-    participant App as 🖥️ App
-    participant Agent as 🤖 Agent
-    participant Bing as 🌐 Bing API
+    participant App as 🖥️ Streamlit App
+    participant Agent as 🤖 BingFoundry-DirectAgent
+    participant Bing as 🌐 Bing Grounding API
     
-    U->>App: Select market="de-DE" from dropdown
-    App->>App: BingGroundingSearchConfiguration(market="de-DE")
-    App->>Agent: Create Agent with configured tool
-    Agent->>Bing: Search with market=de-DE
-    Bing-->>U: German-localized results
+    U->>App: Enter company name<br/>Select market (e.g., de-DE)
+    App->>App: Create BingGroundingTool<br/>with market="de-DE"
+    App->>Agent: Create/Get Agent with<br/>Bing tool attached
+    Agent->>Bing: Search with grounding
+    Bing-->>Agent: Grounded results + citations
+    Agent-->>App: Analysis response
+    App-->>U: Risk analysis with<br/>URL citations
 ```
 
-### Scenario 2: Agent → MCP Server (Another Agent)
+**Key Characteristics:**
+- Market configured at tool creation time
+- Single agent with native Bing grounding
+- Citations returned as URL annotations
+- Best for: Simple single-market searches
 
-User selects market → Market passed as MCP tool argument → MCP Server creates tool dynamically
+---
+
+### Scenario 2: Two-Agent Pattern via MCP Server
+
+**Architecture**: User → Orchestrator Agent → MCP Tool → Worker Agent (with Bing) → Results
+
+An orchestrator agent delegates search to ephemeral worker agents via MCP.
 
 ```mermaid
 sequenceDiagram
     participant U as 👤 User
-    participant App as 🖥️ App
+    participant App as 🖥️ Streamlit App
+    participant Orch as 🤖 Orchestrator Agent
     participant MCP as 🔌 MCP Server
-    participant Agent2 as 🤖 Agent 2
+    participant Worker as 🤖 Worker Agent
     participant Bing as 🌐 Bing API
     
-    U->>App: Select market="de-DE" from dropdown
-    App->>MCP: tools/call {arguments: {market: "de-DE"}}
-    MCP->>MCP: Extract market from arguments
-    MCP->>Agent2: Create tool with market from args
-    Agent2->>Bing: Search with market=de-DE
-    Bing-->>U: German-localized results
+    U->>App: Analyze "Tesla" in de-DE market
+    App->>Orch: Risk analysis request
+    Orch->>MCP: create_and_run_bing_agent<br/>(company, market="de-DE")
+    MCP->>Worker: Create ephemeral agent<br/>with market-specific Bing tool
+    Worker->>Bing: Grounded search
+    Bing-->>Worker: Results + citations
+    Worker-->>MCP: Search results
+    MCP->>MCP: Delete worker agent
+    MCP-->>Orch: JSON response with citations
+    Orch-->>App: Final analysis
+    App-->>U: Risk report with sources
 ```
+
+**Key Characteristics:**
+- Dynamic market configuration at runtime
+- Worker agents created/deleted per request
+- Two-tier agent architecture
+- Best for: Dynamic market selection, isolated searches
+
+---
+
+### Scenario 3: Agent → MCP Tool → REST API
+
+**Architecture**: User → Agent (MCP Tool) → MCP Server → Bing REST API → Results
+
+Agent uses MCP tool that directly calls the Bing Grounding REST API.
+
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant App as 🖥️ Streamlit App
+    participant Agent as 🤖 BingFoundry-MCPAgent
+    participant MCP as 🔌 MCP Server
+    participant REST as 🌐 Bing REST API
+    
+    U->>App: Search request with market
+    App->>Agent: Invoke with MCP tool
+    Agent->>MCP: bing_search_rest_api<br/>(query, market="ja-JP")
+    MCP->>REST: POST /openai/responses<br/>with bing_grounding tool
+    REST-->>MCP: JSON response with<br/>output_text + citations
+    MCP-->>Agent: Formatted results
+    Agent-->>App: Analysis with citations
+    App-->>U: Risk analysis
+```
+
+**Key Characteristics:**
+- Direct REST API call (no nested agents)
+- Citations extracted from REST response
+- Configurable count, freshness, setLang
+- Best for: Fine-grained control over search parameters
+
+---
+
+### Scenario 4: Multi-Market Sequential Search
+
+**Architecture**: User → Agent → MCP Tool (called N times) → Aggregated Results
+
+Single agent makes multiple sequential tool calls for different markets.
+
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant App as 🖥️ Streamlit App
+    participant Agent as 🤖 BingFoundry-MultiMarket
+    participant MCP as 🔌 MCP Server
+    participant Bing as 🌐 Bing REST API
+    
+    U->>App: Analyze across en-US, de-DE, ja-JP
+    App->>Agent: Multi-market request
+    
+    loop For each market (sequential)
+        Agent->>MCP: bing_search_rest_api<br/>(query, market=X)
+        MCP->>Bing: REST API call
+        Bing-->>MCP: Market-specific results
+        MCP-->>Agent: JSON with citations
+    end
+    
+    Agent->>Agent: Aggregate all<br/>market results
+    Agent-->>App: Cross-market analysis
+    App-->>U: Comparative report<br/>with all citations
+```
+
+**Key Characteristics:**
+- Sequential execution (one market at a time)
+- Single agent, multiple tool calls
+- Prompt-driven market iteration
+- Best for: Simple multi-market needs (2-3 markets)
+
+---
+
+### Scenario 5: Workflow-Based Parallel Multi-Market
+
+**Architecture**: User → Dispatcher → Parallel Search Agents → Aggregator → Analysis Agent → Results
+
+Structured workflow with parallel execution and dedicated analysis phase.
+
+```mermaid
+flowchart TB
+    subgraph Input
+        U[👤 User Request]
+    end
+    
+    subgraph "Stage 1: Dispatch"
+        D[📤 Market Dispatcher]
+    end
+    
+    subgraph "Stage 2: Parallel Search"
+        S1[🔍 en-US Search]
+        S2[🔍 de-DE Search]
+        S3[🔍 ja-JP Search]
+    end
+    
+    subgraph "Stage 3: Aggregation"
+        A[📊 Result Aggregator]
+    end
+    
+    subgraph "Stage 4: Analysis"
+        AN[🧠 Analysis Agent]
+    end
+    
+    subgraph Output
+        R[📋 Final Report]
+    end
+    
+    U --> D
+    D --> S1 & S2 & S3
+    S1 & S2 & S3 --> A
+    A --> AN
+    AN --> R
+    
+    style S1 fill:#e1f5fe
+    style S2 fill:#e1f5fe
+    style S3 fill:#e1f5fe
+    style A fill:#fff3e0
+    style AN fill:#e8f5e9
+```
+
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant App as 🖥️ App
+    participant D as 📤 Dispatcher
+    participant S as 🔍 Search Agents
+    participant A as 📊 Aggregator
+    participant AN as 🧠 Analyzer
+
+    U->>App: Multi-market request<br/>(en-US, de-DE, ja-JP)
+    App->>D: Stage 1: Dispatch markets
+    
+    par Parallel Execution
+        D->>S: Search en-US
+        D->>S: Search de-DE
+        D->>S: Search ja-JP
+    end
+    
+    S-->>A: Stage 3: Collect results<br/>(success/timeout/error per market)
+    A->>A: Aggregate citations<br/>Handle partial failures
+    A->>AN: Stage 4: Market findings
+    AN->>AN: Cross-market analysis<br/>(no tools, pure synthesis)
+    AN-->>App: Final report
+    App-->>U: Comparative analysis<br/>with all citations
+```
+
+**Key Characteristics:**
+- **3-5x faster** than sequential (parallel execution)
+- Per-market timeout handling (90s default)
+- Graceful degradation on failures
+- Dedicated analysis agent (no tools)
+- Best for: Production multi-market research
+
+---
+
+## 📊 Scenario Comparison
+
+| Feature | Scenario 1 | Scenario 2 | Scenario 3 | Scenario 4 | Scenario 5 |
+|---------|------------|------------|------------|------------|------------|
+| **Pattern** | Direct | Two-Agent | MCP REST | Multi-Market | Workflow |
+| **Markets** | Single | Single | Single | Multiple | Multiple |
+| **Execution** | Sync | Sync | Sync | Sequential | **Parallel** |
+| **Timeout Handling** | Basic | Basic | Basic | Limited | **Per-market** |
+| **Failure Mode** | All-or-nothing | All-or-nothing | All-or-nothing | All-or-nothing | **Graceful** |
+| **Complexity** | Low | Medium | Medium | Medium | High |
+| **Best For** | Simple queries | Dynamic config | REST control | Few markets | Production |
+
+---
 
 ## 🔑 Key Technical Investigation: Market Parameter
 

@@ -37,6 +37,18 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Hide sidebar completely with CSS
+st.markdown("""
+    <style>
+        [data-testid="stSidebar"] {
+            display: none;
+        }
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # Load environment and setup tracing
 from dotenv import load_dotenv
 load_dotenv()
@@ -49,6 +61,7 @@ from ui.pages.scenario1 import render_scenario1
 from ui.pages.scenario2 import render_scenario2
 from ui.pages.scenario3 import render_scenario3
 from ui.pages.scenario4 import render_scenario4
+from ui.pages.scenario5 import render_scenario5
 from ui.pages.documentation import render_documentation
 
 logger.info(f"Tracing enabled: {tracing_enabled}")
@@ -64,6 +77,8 @@ def init_session_state():
         st.session_state.rest_api_results = []
     if "multi_market_results" not in st.session_state:
         st.session_state.multi_market_results = []
+    if "workflow_results" not in st.session_state:
+        st.session_state.workflow_results = []
     if "config_valid" not in st.session_state:
         st.session_state.config_valid = False
     if "mcp_connected" not in st.session_state:
@@ -97,11 +112,12 @@ def main():
 
     # Main content area with tabs
     logger.info("Creating tabs...")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🎯 Scenario 1: Direct Agent",
         "🔗 Scenario 2: Two-Agent",
         "🌐 Scenario 3: MCP REST",
         "🌍 Scenario 4: Multi-Market",
+        "⚡ Scenario 5: Workflow",
         "📖 Documentation"
     ])
 
@@ -119,6 +135,9 @@ def main():
         render_scenario4(config)
 
     with tab5:
+        render_scenario5(config)
+
+    with tab6:
         render_documentation()
 
     logger.info("Application rendering complete")
