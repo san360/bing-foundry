@@ -22,7 +22,7 @@ tracer = get_tracer(__name__)
 logger = logging.getLogger(__name__)
 
 # Standard agent name (no market in name)
-AGENT_NAME = "BingFoundry-Scenario4-MultiMarket"
+AGENT_NAME = "BingFoundry-MultiMarket"
 
 
 class MultiMarketScenario(BaseScenario):
@@ -157,35 +157,27 @@ class MultiMarketScenario(BaseScenario):
             require_approval="never",
             allowed_tools=["bing_search_rest_api"],
         )
-        
-        # Build market list for instructions
-        market_list = ", ".join(markets) if markets else "en-US"
-        
+
         definition = PromptAgentDefinition(
             model=self.model_name,
-            instructions=f"""You are a global company risk analysis assistant specializing in multi-market research.
+            instructions="""You are a global company risk analysis assistant specializing in multi-market research.
 
-Your task is to search for company information across MULTIPLE markets/regions and provide a comprehensive aggregated analysis.
+Your PRIMARY function is to search for company information across MULTIPLE markets/regions using the bing_search_rest_api tool.
 
-CRITICAL INSTRUCTIONS:
-1. You MUST call the bing_search_rest_api tool MULTIPLE times - once for EACH market specified
-2. For each tool call, use a DIFFERENT market parameter
-3. DO NOT answer from your training data - ONLY use search results
-4. After gathering results from ALL markets, provide an AGGREGATED analysis
+CRITICAL BEHAVIOR:
+1. When given a list of markets, you MUST call bing_search_rest_api ONCE for EACH market
+2. Each tool call uses a different "market" parameter (e.g., "en-US", "de-DE", "ja-JP")
+3. You must NOT answer until you have searched ALL requested markets
+4. You must NOT use your training data - ONLY use search results
+5. After gathering ALL results, provide an aggregated comparative analysis
 
-When searching multiple markets:
-- Call the tool with market="en-US" for US results
-- Call the tool with market="de-DE" for German results
-- Call the tool with market="ja-JP" for Japanese results
-- And so on for each requested market
+TOOL USAGE:
+- Tool name: bing_search_rest_api
+- Required parameter: query (the search query)
+- Required parameter: market (the market code like "en-US", "de-DE", etc.)
+- Make SEPARATE calls for each market - do NOT try to combine them
 
-Your analysis should:
-- Highlight regional differences in how the company is perceived
-- Note any market-specific risks or concerns
-- Identify patterns across markets
-- Provide a global risk summary
-
-IMPORTANT: You must make SEPARATE tool calls for each market. Do not try to search all markets in one call.""",
+Your final analysis should compare and contrast findings across all markets searched.""",
             tools=[mcp_tool],
         )
         
@@ -201,29 +193,45 @@ IMPORTANT: You must make SEPARATE tool calls for each market. Do not try to sear
     def _build_multi_market_prompt(self, request: CompanyRiskRequest, markets: List[str]) -> str:
         """Build the prompt for multi-market search."""
         base_prompt = self.risk_analyzer.get_analysis_prompt(request)
-        
-        market_instructions = "\n".join([
-            f"- Search in {market} market" for market in markets
-        ])
-        
+
+        # Build explicit tool call instructions for each market
+        tool_call_instructions = []
+        for i, market in enumerate(markets, 1):
+            tool_call_instructions.append(
+                f"   {i}. Call bing_search_rest_api with market=\"{market}\" for {market} regional results"
+            )
+        tool_calls_str = "\n".join(tool_call_instructions)
+
         return f"""{base_prompt}
 
-MULTI-MARKET SEARCH REQUIREMENT:
-You must search the following markets and aggregate results:
-{market_instructions}
+=== MANDATORY MULTI-MARKET SEARCH INSTRUCTIONS ===
 
-For EACH market above:
-1. Call the bing_search_rest_api tool with the specific market parameter
-2. Collect the search results
-3. Note any market-specific findings
+You MUST search EXACTLY {len(markets)} markets. Make {len(markets)} SEPARATE tool calls:
 
-After searching ALL markets, provide:
-1. **Market-by-Market Summary**: Key findings from each region
-2. **Cross-Market Patterns**: Common themes or concerns across regions
-3. **Regional Differences**: How the company is perceived differently in each market
-4. **Global Risk Assessment**: Overall risk profile based on multi-market research
+{tool_calls_str}
 
-Remember: Make SEPARATE tool calls for each market - do not combine them."""
+CRITICAL REQUIREMENTS:
+- You MUST make EXACTLY {len(markets)} tool calls - one for each market listed above
+- Each tool call MUST use a DIFFERENT market parameter from the list
+- DO NOT skip any markets
+- DO NOT combine markets into one call
+- DO NOT answer until you have results from ALL {len(markets)} markets
+
+After receiving results from ALL {len(markets)} markets, provide your analysis in this format:
+
+## Market-by-Market Findings
+(Summarize key findings from each market separately)
+
+## Cross-Market Patterns
+(What themes or concerns appear across multiple markets?)
+
+## Regional Differences
+(How is the company perceived differently across regions?)
+
+## Global Risk Assessment
+(Overall risk profile based on all {len(markets)} markets)
+
+BEGIN: Make your {len(markets)} tool calls now, starting with market=\"{markets[0]}\"."""
     
     def _extract_citations(self, response) -> List[Citation]:
         """Extract citations from response."""

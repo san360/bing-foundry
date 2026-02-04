@@ -91,8 +91,8 @@ class MCPAgentScenario(BaseScenario):
         self._project_client: Optional[AIProjectClient] = None
         self._openai_client = None
         self._orchestrator_agent = None
-        # Standard naming: BingFoundry-Scenario2-Orchestrator (no market in name)
-        self._orchestrator_agent_name = "BingFoundry-Scenario2-Orchestrator"
+        # Standard naming: BingFoundry-Orchestrator (no market in name)
+        self._orchestrator_agent_name = "BingFoundry-Orchestrator"
     
     def _get_credential(self):
         """Get chained credential for Azure authentication."""

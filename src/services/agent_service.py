@@ -4,12 +4,12 @@ Agent service for managing AI agent lifecycle.
 Uses Azure AI Projects SDK (v2.0.0b3+) New Agents API with versioned agents.
 Agents are visible in Foundry portal. Executes via OpenAI Responses API.
 
-Naming Convention: BingFoundry-{Scenario}-{descriptor}
-- Scenario1: BingFoundry-Scenario1-DirectAgent
-- Scenario2: BingFoundry-Scenario2-Orchestrator
-- Scenario3: BingFoundry-Scenario3-MCPAgent  
-- Scenario4: BingFoundry-Scenario4-MultiMarket
-- MCP Server: BingFoundry-MCP-SearchAgent
+Naming Convention: BingFoundry-{descriptor}
+- Scenario1: BingFoundry-DirectAgent
+- Scenario2: BingFoundry-Orchestrator
+- Scenario3: BingFoundry-MCPAgent
+- Scenario4: BingFoundry-MultiMarket
+- MCP Server: BingFoundry-MCP-SearchAgent, BingFoundry-MCP-WorkerAgent
 - Risk Agent: BingFoundry-RiskAgent
 """
 import logging

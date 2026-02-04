@@ -77,8 +77,8 @@ class DirectAgentScenario(BaseScenario):
                 # Generate prompt
                 prompt = self.risk_analyzer.get_analysis_prompt(request)
                 
-                # Standard naming: BingFoundry-Scenario1-DirectAgent (no market in name)
-                agent_name = "BingFoundry-Scenario1-DirectAgent"
+                # Standard naming: BingFoundry-DirectAgent (no market in name)
+                agent_name = "BingFoundry-DirectAgent"
                 
                 # Get or create agent (reuses existing if available)
                 agent_info = self.agent_service.get_or_create_agent(

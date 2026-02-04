@@ -94,18 +94,16 @@ def render_scenario2(config: AzureConfig):
                 st.caption("**🤖 Orchestrator Agent (Agent 1 - Persistent):**")
                 orc_col1, orc_col2 = st.columns(2)
                 with orc_col1:
-                    st.metric("Orchestrator Name", result.get('orchestrator_agent_name', 'RiskAnalysisOrchestrator'))
+                    st.metric("Orchestrator Name", result.get('orchestrator_agent_name', 'BingFoundry-Orchestrator'))
+                    if result.get('orchestrator_agent_id'):
+                        st.code(result['orchestrator_agent_id'], language=None)
                 with orc_col2:
                     st.metric("Orchestrator Version", result.get('orchestrator_agent_version', 'N/A'))
-                
-                if result.get('agent_name'):
-                    st.caption("**🔧 Worker Agent (Agent 2 - Ephemeral, Deleted After Use):**")
-                    agent_col1, agent_col2 = st.columns(2)
-                    with agent_col1:
-                        st.metric("Worker Name", result.get('agent_name', 'N/A'))
-                    with agent_col2:
-                        st.metric("Worker Version", result.get('agent_version', 'N/A'))
-                    st.info("ℹ️ Worker Agent was created, used, and deleted by the MCP Server")
+
+                # MCP Server Info
+                st.caption("**🔧 MCP Server (Creates Worker Agents):**")
+                st.info(f"MCP URL: {result.get('mcp_url', 'N/A')}")
+                st.caption("ℹ️ Worker Agents are created, used, and deleted by the MCP Server automatically")
                 
                 st.markdown("---")
                 st.caption("**📍 Route:** Orchestrator Agent → MCP Tool → Worker Agent (Bing) → Bing API → Delete Worker")
@@ -146,9 +144,10 @@ def run_scenario2_analysis(
                 "market": market,
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "response": response.text,
-                "agent_id": response.metadata.get("agent_id"),
-                "agent_name": response.metadata.get("agent_name"),
-                "agent_version": response.metadata.get("agent_version"),
+                "orchestrator_agent_id": response.metadata.get("orchestrator_agent_id"),
+                "orchestrator_agent_name": response.metadata.get("orchestrator_agent_name"),
+                "orchestrator_agent_version": response.metadata.get("orchestrator_agent_version"),
+                "mcp_url": response.metadata.get("mcp_url"),
             })
             
             st.success(f"✅ MCP Analysis complete")

@@ -77,8 +77,8 @@ class MCPRestAPIScenario(BaseScenario):
             project_client = self.client_factory.get_project_client()
             openai_client = self.client_factory.get_openai_client()
             
-            # Standard naming: BingFoundry-Scenario3-MCPAgent (no market in name)
-            agent_name = "BingFoundry-Scenario3-MCPAgent"
+            # Standard naming: BingFoundry-MCPAgent (no market in name)
+            agent_name = "BingFoundry-MCPAgent"
             
             # Try to find existing agent
             agent = None

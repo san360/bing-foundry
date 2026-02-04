@@ -193,9 +193,26 @@ async def perform_bing_search(query: str, market: str = "en-US") -> dict:
             )
         )
 
-        agent = client.agents.create_version(
-            agent_name=f"bing-search-agent-{market}",
-            definition=PromptAgentDefinition(
+        # Standard naming: BingFoundry-MCP-SearchAgent (no market in name)
+        agent_name = "BingFoundry-MCP-SearchAgent"
+
+        # Try to find existing agent
+        agent = None
+        try:
+            agents = list(client.agents.list())
+            for existing_agent in agents:
+                if existing_agent.name == agent_name:
+                    logger.info(f"♻️  Reusing existing search agent: {agent_name}")
+                    agent = existing_agent
+                    break
+        except Exception as e:
+            logger.debug(f"Could not list agents: {e}")
+
+        # Create new agent if not found
+        if agent is None:
+            agent = client.agents.create_version(
+                agent_name=agent_name,
+                definition=PromptAgentDefinition(
                 model=MODEL_DEPLOYMENT_NAME,
                 instructions=(
                     "You are a search assistant. Perform web searches and return comprehensive, factual results."

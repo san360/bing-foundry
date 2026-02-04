@@ -625,8 +625,8 @@ async def create_and_run_bing_agent(
             )
         )
         
-        # Standard naming: BingFoundry-Worker-{market}
-        agent_name = f"BingFoundry-Worker-{market}"
+        # Standard naming: BingFoundry-MCP-WorkerAgent (no market in name)
+        agent_name = "BingFoundry-MCP-WorkerAgent"
         
         # Try to find existing agent
         agent = None
