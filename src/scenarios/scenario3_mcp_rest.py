@@ -57,14 +57,15 @@ class MCPRestAPIScenario(BaseScenario):
         from azure.ai.projects.models import PromptAgentDefinition, MCPTool
         
         # Create MCP Tool pointing to our server
+        # Using single custom tool that wraps Bing REST API
         mcp_tool = MCPTool(
             server_label="bing_rest_api_mcp",
             server_url=self.mcp_url,
             require_approval="never",
-            allowed_tools=["bing_search_rest_api", "analyze_company_risk_rest_api"],
+            allowed_tools=["bing_search_rest_api"],  # Single tool wrapping Bing REST API
         )
         
-        logger.info(f"Created MCP Tool pointing to: {self.mcp_url}")
+        logger.info(f"✅ Created MCP Tool with single REST API wrapper: {self.mcp_url}")
         
         # Create agent with MCP tool
         agent = project_client.agents.create_version(
@@ -88,7 +89,8 @@ Provide a comprehensive risk assessment based on the search results.""",
             description="Agent with custom MCP tool for Bing REST API search",
         )
         
-        logger.info(f"Created agent: {agent.id}, {agent.name}")
+        logger.info(f"✅ Created Agent: {agent.name} (v{agent.version})")
+        logger.info(f"   Agent ID: {agent.id}")
         
         try:
             # Build the query
@@ -100,7 +102,7 @@ Provide a comprehensive risk assessment based on the search results.""",
                 extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
             )
             
-            logger.info("Got response from agent with MCP tool")
+            logger.info(f"✅ Received response from agent {agent.name}")
             
             # Extract citations
             citations = []
@@ -124,7 +126,10 @@ Provide a comprehensive risk assessment based on the search results.""",
                 metadata={
                     "scenario": "mcp_rest_api",
                     "agent_id": agent.id,
+                    "agent_name": agent.name,
+                    "agent_version": agent.version,
                     "mcp_url": self.mcp_url,
+                    "tool_count": 1,  # Single MCP tool
                 }
             )
         
@@ -134,4 +139,4 @@ Provide a comprehensive risk assessment based on the search results.""",
                 agent_name=agent.name,
                 agent_version=agent.version,
             )
-            logger.info(f"Deleted agent: {agent.name}")
+            logger.info(f"🗑️  Cleaned up agent: {agent.name} (v{agent.version})")

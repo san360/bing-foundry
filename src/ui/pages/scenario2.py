@@ -74,6 +74,20 @@ def render_scenario2(config: AzureConfig):
                 f"[MCP] {result['company']} | {result['timestamp']}",
                 expanded=(i == 0)
             ):
+                # Agent Information (created by MCP server)
+                if result.get('agent_name'):
+                    st.caption("**🤖 Agent Information (Created by MCP Server):**")
+                    agent_col1, agent_col2, agent_col3 = st.columns(3)
+                    with agent_col1:
+                        st.metric("Agent Name", result.get('agent_name', 'N/A'))
+                    with agent_col2:
+                        st.metric("Version", result.get('agent_version', 'N/A'))
+                    with agent_col3:
+                        st.metric("Agent ID", result.get('agent_id', 'N/A')[:8] + '...' if result.get('agent_id') else 'N/A')
+                    st.markdown("---")
+                
+                st.caption("**📍 Route:** User → MCP Server → Agent 2 (with Bing Tool) → Bing API")
+                st.markdown("---")
                 st.markdown(result.get('response', 'No response'))
 
 
@@ -110,6 +124,9 @@ def run_scenario2_analysis(
                 "market": market,
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "response": response.text,
+                "agent_id": response.metadata.get("agent_id"),
+                "agent_name": response.metadata.get("agent_name"),
+                "agent_version": response.metadata.get("agent_version"),
             })
             
             st.success(f"✅ MCP Analysis complete")

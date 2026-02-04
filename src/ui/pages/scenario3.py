@@ -78,6 +78,19 @@ def render_scenario3(config: AzureConfig):
                 f"[Agent→MCP→REST] {result['company']} | {result['timestamp']}",
                 expanded=(i == 0)
             ):
+                # Agent Information
+                st.caption("**🤖 Agent Information (with Single MCP Tool):**")
+                agent_col1, agent_col2, agent_col3 = st.columns(3)
+                with agent_col1:
+                    st.metric("Agent Name", result.get('agent_name', 'N/A'))
+                with agent_col2:
+                    st.metric("Version", result.get('agent_version', 'N/A'))
+                with agent_col3:
+                    st.metric("Agent ID", result.get('agent_id', 'N/A')[:8] + '...' if result.get('agent_id') else 'N/A')
+                
+                st.info(f"**MCP Tool:** Single `bing_search_rest_api` wrapper → {result.get('mcp_url', 'N/A')}")
+                st.caption("**📍 Route:** User → Agent (MCP Tool) → MCP Server → Bing REST API")
+                st.markdown("---")
                 st.markdown(result.get('text', 'No response'))
                 
                 if result.get('citations'):
@@ -123,6 +136,8 @@ def run_scenario3_analysis(
                 "text": response.text,
                 "citations": [{"url": c.url, "title": c.title} for c in response.citations],
                 "agent_id": response.metadata.get("agent_id"),
+                "agent_name": response.metadata.get("agent_name"),
+                "agent_version": response.metadata.get("agent_version"),
                 "mcp_url": mcp_url,
             })
             

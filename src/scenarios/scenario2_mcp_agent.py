@@ -84,22 +84,35 @@ class MCPAgentScenario(BaseScenario):
             data = response.json()
             result_content = data.get("result", {}).get("content", [])
             
-            # Extract text from response
+            # Extract text and agent info from response
             response_text = ""
+            agent_info = {}
+            
             for content in result_content:
                 if content.get("type") == "text":
                     response_text = content.get("text", "")
                     try:
                         # Try to parse as JSON if it's a structured response
                         parsed = json.loads(response_text)
-                        if isinstance(parsed, dict) and "search_results" in parsed:
-                            search_results = parsed["search_results"]
-                            if "results" in search_results:
-                                response_text = search_results["results"][0].get("content", "")
+                        if isinstance(parsed, dict):
+                            # Extract agent information from MCP response
+                            if "agent_id" in parsed:
+                                agent_info["agent_id"] = parsed["agent_id"]
+                            if "agent_name" in parsed:
+                                agent_info["agent_name"] = parsed["agent_name"]
+                            if "agent_version" in parsed:
+                                agent_info["agent_version"] = parsed["agent_version"]
+                            
+                            if "search_results" in parsed:
+                                search_results = parsed["search_results"]
+                                if "results" in search_results:
+                                    response_text = search_results["results"][0].get("content", "")
                     except:
                         pass
             
-            logger.info(f"Scenario 2 complete via MCP")
+            logger.info(f"✅ Scenario 2 complete via MCP")
+            if agent_info:
+                logger.info(f"   Agent created by MCP: {agent_info.get('agent_name', 'unknown')} (v{agent_info.get('agent_version', '?')})")
             
             return AnalysisResponse(
                 text=response_text,
@@ -109,5 +122,6 @@ class MCPAgentScenario(BaseScenario):
                     "scenario": "mcp_agent_to_agent",
                     "mcp_url": self.mcp_url,
                     "risk_category": request.risk_category.value,
+                    **agent_info,  # Include agent info from MCP
                 }
             )

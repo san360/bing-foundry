@@ -40,9 +40,17 @@ try:
 except ImportError:
     trace = None
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging - Reduce verbose HTTP/Azure logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Silence noisy loggers
+logging.getLogger('azure').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('azure.core.pipeline').setLevel(logging.ERROR)
 
 # Configuration - Support both naming conventions
 PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("PROJECT_ENDPOINT", "")
@@ -195,6 +203,8 @@ async def perform_bing_search(query: str, market: str = "en-US") -> dict:
             ),
             description="Bing search agent for MCP server",
         )
+        
+        logger.info(f"✅ MCP: Created agent {agent.name} (v{agent.version}) for market={market}")
 
         try:
             response = openai_client.responses.create(
@@ -207,6 +217,9 @@ async def perform_bing_search(query: str, market: str = "en-US") -> dict:
                 "query": query,
                 "market": market,
                 "status": "completed",
+                "agent_id": agent.id,
+                "agent_name": agent.name,
+                "agent_version": agent.version,
                 "results": [],
             }
 
@@ -219,6 +232,7 @@ async def perform_bing_search(query: str, market: str = "en-US") -> dict:
                 agent_name=agent.name,
                 agent_version=agent.version,
             )
+            logger.info(f"🗑️  MCP: Cleaned up agent {agent.name}")
             if span_cm:
                 span_cm.__exit__(None, None, None)
             

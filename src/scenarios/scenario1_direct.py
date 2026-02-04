@@ -96,7 +96,9 @@ class DirectAgentScenario(BaseScenario):
             
             try:
                 # Execute the analysis
-                logger.info(f"Executing Scenario 1 for {request.company_name}")
+                logger.info(f"✅ Created Agent: {agent.name} (v{agent.version})")
+                logger.info(f"   Agent ID: {agent.id}")
+                logger.info(f"🔍 Starting analysis for {request.company_name}...")
                 
                 response = openai_client.responses.create(
                     tool_choice="required",
@@ -107,7 +109,7 @@ class DirectAgentScenario(BaseScenario):
                 # Extract citations
                 citations = self.agent_service._extract_citations(response)
                 
-                logger.info(f"Scenario 1 complete: {len(citations)} citations")
+                logger.info(f"✅ Analysis complete: {len(citations)} citations found")
                 
                 return AnalysisResponse(
                     text=response.output_text,
@@ -115,7 +117,9 @@ class DirectAgentScenario(BaseScenario):
                     market_used=request.search_config.market,
                     metadata={
                         "scenario": "direct_agent",
+                        "agent_id": agent.id,
                         "agent_name": agent.name,
+                        "agent_version": agent.version,
                         "tool_config": tool_builder.get_config_info(request.search_config),
                     }
                 )

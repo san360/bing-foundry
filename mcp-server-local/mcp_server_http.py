@@ -37,9 +37,19 @@ try:
 except ImportError:
     trace = None
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging - Reduce verbose HTTP/Azure logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Silence noisy loggers
+logging.getLogger('aiohttp').setLevel(logging.WARNING)
+logging.getLogger('azure').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('azure.core.pipeline').setLevel(logging.ERROR)
 
 # Configuration - Support both naming conventions for flexibility
 PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("PROJECT_ENDPOINT", "")

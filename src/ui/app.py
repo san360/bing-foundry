@@ -8,13 +8,19 @@ import sys
 import logging
 from pathlib import Path
 
-# Configure logging
+# Configure logging - Reduce verbose HTTP/Azure logs
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+# Silence noisy loggers
+logging.getLogger('azure').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('azure.core.pipeline').setLevel(logging.ERROR)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))

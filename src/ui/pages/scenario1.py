@@ -97,6 +97,18 @@ def render_scenario1(config: AzureConfig):
                 f"Analysis: {result['company']} | Market: {result['market'] or 'Default'} | {result['timestamp']}",
                 expanded=(i == 0)
             ):
+                # Agent Information
+                st.caption("**🤖 Agent Information:**")
+                agent_col1, agent_col2, agent_col3 = st.columns(3)
+                with agent_col1:
+                    st.metric("Agent Name", result.get('agent_name', 'N/A'))
+                with agent_col2:
+                    st.metric("Version", result.get('agent_version', 'N/A'))
+                with agent_col3:
+                    st.metric("Agent ID", result.get('agent_id', 'N/A')[:8] + '...' if result.get('agent_id') else 'N/A')
+                
+                st.markdown("---")
+                st.caption("**🔧 Tool Configuration:**")
                 st.json(result['tool_config'])
                 st.markdown("---")
                 st.markdown(result['text'])
@@ -149,6 +161,9 @@ def run_scenario1_analysis(
                 "text": response.text,
                 "citations": [{"url": c.url, "title": c.title} for c in response.citations],
                 "tool_config": response.metadata.get("tool_config", {}),
+                "agent_id": response.metadata.get("agent_id"),
+                "agent_name": response.metadata.get("agent_name"),
+                "agent_version": response.metadata.get("agent_version"),
             })
             
             st.success(f"✅ Analysis complete for {company_name}")
