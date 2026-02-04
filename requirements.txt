@@ -1,5 +1,6 @@
-# Azure AI Projects SDK
-azure-ai-projects>=1.0.0b5
+# Azure AI Projects & Agents SDK
+azure-ai-projects>=1.0.0b10
+azure-ai-agents>=1.0.0
 azure-identity>=1.15.0
 
 # Streamlit for UI

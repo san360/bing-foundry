@@ -1,10 +1,10 @@
 """
-Scenario 2 UI page: MCP Agent to Agent.
+Scenario 2 UI page: Two-Agent Pattern via MCP.
 """
 import sys
 from pathlib import Path
 
-# Add src to path
+# Add src to path (go up from pages -> ui -> src)
 src_path = Path(__file__).parent.parent.parent
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
@@ -12,20 +12,28 @@ if str(src_path) not in sys.path:
 import streamlit as st
 import asyncio
 import datetime
-from src.infrastructure import AzureConfig, AzureClientFactory, MCPConfig, MARKET_OPTIONS
-from src.services import RiskAnalyzer
-from src.scenarios import MCPAgentScenario
-from src.core.models import CompanyRiskRequest, SearchConfig, RiskCategory, ScenarioType
+from infrastructure import AzureConfig, AzureClientFactory, MCPConfig, MARKET_OPTIONS
+from services import RiskAnalyzer
+from scenarios import MCPAgentScenario
+from core.models import CompanyRiskRequest, SearchConfig, RiskCategory, ScenarioType
 
 
 def render_scenario2(config: AzureConfig):
-    """Render Scenario 2: MCP Agent to Agent."""
-    st.header("🔗 Scenario 2: Agent → MCP Server → Agent")
+    """Render Scenario 2: Two-Agent Pattern via MCP."""
+    st.header("🔗 Scenario 2: Two-Agent Pattern via MCP")
     
     st.markdown("""
-    **Architecture:** User → MCP Server → Agent 2 (with Bing Tool)
+    **Architecture:** Orchestrator Agent → MCP Tool → Worker Agent (ephemeral)
     
-    Market parameter flows through MCP tool arguments.
+    **Flow:**
+    1. **Orchestrator Agent (Agent 1)** receives the request
+    2. Orchestrator calls MCP tool `create_and_run_bing_agent` with market config
+    3. MCP Server creates **Worker Agent (Agent 2)** with specified market
+    4. Worker Agent executes Bing-grounded search
+    5. MCP Server **deletes** Worker Agent after getting results
+    6. Results flow back through Orchestrator to User
+    
+    **Key:** Worker Agents are ephemeral - created per-request and deleted after use.
     """)
     
     st.divider()
@@ -65,7 +73,7 @@ def render_scenario2(config: AzureConfig):
     
     # Run button
     if st.button(
-        "🔍 Run via MCP",
+        "🔍 Run Two-Agent Analysis",
         type="primary",
         disabled=not company_name,
         use_container_width=True
@@ -75,26 +83,32 @@ def render_scenario2(config: AzureConfig):
     # Display results
     if st.session_state.mcp_results:
         st.divider()
-        st.subheader("📊 MCP Results")
+        st.subheader("📊 Two-Agent Pattern Results")
         
         for i, result in enumerate(reversed(st.session_state.mcp_results)):
             with st.expander(
-                f"[MCP] {result['company']} | {result['timestamp']}",
+                f"[Two-Agent] {result['company']} | {result['timestamp']}",
                 expanded=(i == 0)
             ):
-                # Agent Information (created by MCP server)
-                if result.get('agent_name'):
-                    st.caption("**🤖 Agent Information (Created by MCP Server):**")
-                    agent_col1, agent_col2, agent_col3 = st.columns(3)
-                    with agent_col1:
-                        st.metric("Agent Name", result.get('agent_name', 'N/A'))
-                    with agent_col2:
-                        st.metric("Version", result.get('agent_version', 'N/A'))
-                    with agent_col3:
-                        st.metric("Agent ID", result.get('agent_id', 'N/A')[:8] + '...' if result.get('agent_id') else 'N/A')
-                    st.markdown("---")
+                # Agent Information
+                st.caption("**🤖 Orchestrator Agent (Agent 1 - Persistent):**")
+                orc_col1, orc_col2 = st.columns(2)
+                with orc_col1:
+                    st.metric("Orchestrator Name", result.get('orchestrator_agent_name', 'RiskAnalysisOrchestrator'))
+                with orc_col2:
+                    st.metric("Orchestrator Version", result.get('orchestrator_agent_version', 'N/A'))
                 
-                st.caption("**📍 Route:** User → MCP Server → Agent 2 (with Bing Tool) → Bing API")
+                if result.get('agent_name'):
+                    st.caption("**🔧 Worker Agent (Agent 2 - Ephemeral, Deleted After Use):**")
+                    agent_col1, agent_col2 = st.columns(2)
+                    with agent_col1:
+                        st.metric("Worker Name", result.get('agent_name', 'N/A'))
+                    with agent_col2:
+                        st.metric("Worker Version", result.get('agent_version', 'N/A'))
+                    st.info("ℹ️ Worker Agent was created, used, and deleted by the MCP Server")
+                
+                st.markdown("---")
+                st.caption("**📍 Route:** Orchestrator Agent → MCP Tool → Worker Agent (Bing) → Bing API → Delete Worker")
                 st.markdown("---")
                 st.markdown(result.get('response', 'No response'))
 

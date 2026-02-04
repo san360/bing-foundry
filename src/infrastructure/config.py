@@ -59,7 +59,64 @@ class MCPConfig:
 
 
 # Predefined market configurations
+# Reference: https://learn.microsoft.com/en-us/previous-versions/bing/search-apis/bing-web-search/reference/market-codes
 MARKET_OPTIONS = {
+    # Americas
+    "United States (English)": MarketConfig(
+        code="en-US",
+        display_name="United States (English)",
+        language="en",
+        country="US"
+    ),
+    "United States (Spanish)": MarketConfig(
+        code="es-US",
+        display_name="United States (Spanish)",
+        language="es",
+        country="US"
+    ),
+    "Canada (English)": MarketConfig(
+        code="en-CA",
+        display_name="Canada (English)",
+        language="en",
+        country="CA"
+    ),
+    "Canada (French)": MarketConfig(
+        code="fr-CA",
+        display_name="Canada (French)",
+        language="fr",
+        country="CA"
+    ),
+    "Mexico (Spanish)": MarketConfig(
+        code="es-MX",
+        display_name="Mexico (Spanish)",
+        language="es",
+        country="MX"
+    ),
+    "Brazil (Portuguese)": MarketConfig(
+        code="pt-BR",
+        display_name="Brazil (Portuguese)",
+        language="pt",
+        country="BR"
+    ),
+    # Europe
+    "United Kingdom (English)": MarketConfig(
+        code="en-GB",
+        display_name="United Kingdom (English)",
+        language="en",
+        country="GB"
+    ),
+    "Germany (German)": MarketConfig(
+        code="de-DE",
+        display_name="Germany (German)",
+        language="de",
+        country="DE"
+    ),
+    "Austria (German)": MarketConfig(
+        code="de-AT",
+        display_name="Austria (German)",
+        language="de",
+        country="AT"
+    ),
     "Switzerland (German)": MarketConfig(
         code="de-CH",
         display_name="Switzerland (German)",
@@ -72,24 +129,74 @@ MARKET_OPTIONS = {
         language="fr",
         country="CH"
     ),
-    "United States": MarketConfig(
-        code="en-US",
-        display_name="United States",
+    "France (French)": MarketConfig(
+        code="fr-FR",
+        display_name="France (French)",
+        language="fr",
+        country="FR"
+    ),
+    "Spain (Spanish)": MarketConfig(
+        code="es-ES",
+        display_name="Spain (Spanish)",
+        language="es",
+        country="ES"
+    ),
+    "Italy (Italian)": MarketConfig(
+        code="it-IT",
+        display_name="Italy (Italian)",
+        language="it",
+        country="IT"
+    ),
+    "Netherlands (Dutch)": MarketConfig(
+        code="nl-NL",
+        display_name="Netherlands (Dutch)",
+        language="nl",
+        country="NL"
+    ),
+    "Sweden (Swedish)": MarketConfig(
+        code="sv-SE",
+        display_name="Sweden (Swedish)",
+        language="sv",
+        country="SE"
+    ),
+    # Asia Pacific
+    "Japan (Japanese)": MarketConfig(
+        code="ja-JP",
+        display_name="Japan (Japanese)",
+        language="ja",
+        country="JP"
+    ),
+    "Korea (Korean)": MarketConfig(
+        code="ko-KR",
+        display_name="Korea (Korean)",
+        language="ko",
+        country="KR"
+    ),
+    "China (Chinese)": MarketConfig(
+        code="zh-CN",
+        display_name="China (Chinese)",
+        language="zh",
+        country="CN"
+    ),
+    "Taiwan (Chinese)": MarketConfig(
+        code="zh-TW",
+        display_name="Taiwan (Chinese)",
+        language="zh",
+        country="TW"
+    ),
+    "Australia (English)": MarketConfig(
+        code="en-AU",
+        display_name="Australia (English)",
         language="en",
-        country="US"
+        country="AU"
     ),
-    "Germany": MarketConfig(
-        code="de-DE",
-        display_name="Germany",
-        language="de",
-        country="DE"
-    ),
-    "United Kingdom": MarketConfig(
-        code="en-GB",
-        display_name="United Kingdom",
+    "India (English)": MarketConfig(
+        code="en-IN",
+        display_name="India (English)",
         language="en",
-        country="GB"
+        country="IN"
     ),
+    # Default option
     "No Market (Default)": None,
 }
 

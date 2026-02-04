@@ -27,34 +27,6 @@ class ISearchService(ABC):
         pass
 
 
-class IAgentService(ABC):
-    """Interface for AI agent management."""
-    
-    @abstractmethod
-    async def create_agent(
-        self,
-        name: str,
-        instructions: str,
-        tools: list,
-    ) -> str:
-        """Create an agent and return its identifier."""
-        pass
-    
-    @abstractmethod
-    async def delete_agent(self, agent_id: str) -> None:
-        """Delete an agent."""
-        pass
-    
-    @abstractmethod
-    async def run_agent(
-        self,
-        agent_id: str,
-        prompt: str,
-    ) -> AnalysisResponse:
-        """Run an agent with the given prompt."""
-        pass
-
-
 class IRiskAnalyzer(ABC):
     """Interface for risk analysis."""
     

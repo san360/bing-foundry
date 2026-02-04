@@ -57,20 +57,58 @@ PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("PROJECT_
 BING_CONNECTION_NAME = os.getenv("BING_PROJECT_CONNECTION_NAME") or os.getenv("BING_CONNECTION_NAME", "")
 MODEL_DEPLOYMENT_NAME = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME") or os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-4o")
 PORT = int(os.getenv("PORT", "8000"))
-API_VERSION = os.getenv("API_VERSION", "2025-05-01-preview")
+# API version for Foundry Project REST API
+API_VERSION = os.getenv("API_VERSION", "2025-11-15-preview")
 
 # Cache for credentials and connection info
 _cached_credential = None
 _cached_bing_connection_id = None
 _cached_token: AccessToken = None
 
-# Supported markets
+# Supported Bing market codes (from Microsoft documentation)
+# Reference: https://learn.microsoft.com/en-us/previous-versions/bing/search-apis/bing-web-search/reference/market-codes
 SUPPORTED_MARKETS = [
-    "en-US", "en-GB", "en-AU", "en-CA", "en-IN",
-    "de-DE", "fr-FR", "es-ES", "it-IT", "pt-BR",
-    "ja-JP", "ko-KR", "zh-CN", "zh-TW",
-    "nl-NL", "pl-PL", "ru-RU", "sv-SE", "tr-TR",
-    "ar-SA", "hi-IN", "th-TH", "vi-VN"
+    # Americas
+    "en-US",  # United States (English)
+    "es-US",  # United States (Spanish)
+    "en-CA",  # Canada (English)
+    "fr-CA",  # Canada (French)
+    "es-MX",  # Mexico (Spanish)
+    "pt-BR",  # Brazil (Portuguese)
+    "es-AR",  # Argentina (Spanish)
+    "es-CL",  # Chile (Spanish)
+    # Europe
+    "en-GB",  # United Kingdom (English)
+    "de-DE",  # Germany (German)
+    "de-AT",  # Austria (German)
+    "de-CH",  # Switzerland (German)
+    "fr-FR",  # France (French)
+    "fr-BE",  # Belgium (French)
+    "fr-CH",  # Switzerland (French)
+    "es-ES",  # Spain (Spanish)
+    "it-IT",  # Italy (Italian)
+    "nl-NL",  # Netherlands (Dutch)
+    "nl-BE",  # Belgium (Dutch)
+    "pl-PL",  # Poland (Polish)
+    "ru-RU",  # Russia (Russian)
+    "sv-SE",  # Sweden (Swedish)
+    "da-DK",  # Denmark (Danish)
+    "fi-FI",  # Finland (Finnish)
+    "no-NO",  # Norway (Norwegian)
+    "tr-TR",  # Turkey (Turkish)
+    # Asia Pacific
+    "ja-JP",  # Japan (Japanese)
+    "ko-KR",  # Korea (Korean)
+    "zh-CN",  # China (Chinese Simplified)
+    "zh-TW",  # Taiwan (Chinese Traditional)
+    "zh-HK",  # Hong Kong (Chinese Traditional)
+    "en-AU",  # Australia (English)
+    "en-NZ",  # New Zealand (English)
+    "en-IN",  # India (English)
+    "en-PH",  # Philippines (English)
+    "en-MY",  # Malaysia (English)
+    "en-ID",  # Indonesia (English)
+    "en-ZA",  # South Africa (English)
 ]
 
 # Create MCP server
@@ -314,10 +352,11 @@ async def perform_bing_search_rest_api(
         bing_connection_id = _get_bing_connection_id()
         access_token = _get_access_token()
         
-        # Build the REST API request using v1 API format
-        # Reference: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/latest
-        # The v1 API doesn't require api-version parameter
-        url = f"{PROJECT_ENDPOINT}/openai/v1/responses"
+        # Build the REST API request for Foundry Project endpoint
+        # Reference: https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/bing-tools?pivots=rest
+        # Note: For Foundry Project endpoints, use /openai/responses with api-version
+        # (The /openai/v1/ path is only for Azure OpenAI resource endpoints)
+        url = f"{PROJECT_ENDPOINT}/openai/responses?api-version={API_VERSION}"
         
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -482,6 +521,182 @@ async def analyze_company_risk(company_name: str, risk_category: str, market: st
     }
 
 
+async def create_and_run_bing_agent(
+    company_name: str,
+    risk_category: str,
+    market: str = "en-US",
+    count: int = 10,
+    freshness: str = "Month"
+) -> dict:
+    """
+    Create a Worker Agent with Bing tool, run search, and delete the agent.
+    
+    This is the key function for Scenario 2's Two-Agent Pattern:
+    - Creates an ephemeral Worker Agent (Agent 2) with market-specific Bing config
+    - Executes the search query
+    - Deletes the Worker Agent after getting results
+    
+    Args:
+        company_name: Company to analyze
+        risk_category: Type of risk analysis
+        market: Bing market code (e.g., 'en-US', 'de-DE')
+        count: Number of search results
+        freshness: Time filter ('Day', 'Week', 'Month')
+        
+    Returns:
+        Dict with agent info, search results, and confirmation of cleanup
+    """
+    tracer = get_tracer()
+    span_cm = None
+    
+    if tracer:
+        span_cm = tracer.start_as_current_span(
+            "mcp.create_and_run_bing_agent",
+            attributes={
+                "mcp.company": company_name,
+                "mcp.risk_category": risk_category,
+                "mcp.market": market,
+                "mcp.count": count,
+                "mcp.freshness": freshness,
+            },
+        )
+        span_cm.__enter__()
+    
+    client = None
+    agent = None
+    
+    try:
+        # Build the risk-specific query
+        queries = {
+            "litigation": f"{company_name} lawsuits legal cases court filings",
+            "labor_practices": f"{company_name} labor violations employee complaints child labor",
+            "environmental": f"{company_name} environmental violations pollution ESG",
+            "financial": f"{company_name} financial risks debt bankruptcy",
+            "regulatory": f"{company_name} regulatory violations fines investigations",
+            "reputation": f"{company_name} scandals controversies",
+            "all": f"{company_name} risks controversies legal issues financial regulatory"
+        }
+        query = queries.get(risk_category, queries["all"])
+        
+        # Validate market
+        if market not in SUPPORTED_MARKETS:
+            market = "en-US"
+        
+        logger.info(f"🤖 Creating Worker Agent for {company_name} (market: {market})")
+        
+        # Get AI Project client
+        client = get_ai_project_client()
+        openai_client = client.get_openai_client()
+        
+        # Get Bing connection
+        from azure.ai.projects.models import (
+            PromptAgentDefinition,
+            BingGroundingAgentTool,
+            BingGroundingSearchConfiguration,
+            BingGroundingSearchToolParameters,
+        )
+        
+        bing_connection = client.connections.get(BING_CONNECTION_NAME)
+        
+        # Create Bing tool with market-specific configuration
+        bing_tool = BingGroundingAgentTool(
+            bing_grounding=BingGroundingSearchToolParameters(
+                search_configurations=[
+                    BingGroundingSearchConfiguration(
+                        project_connection_id=bing_connection.id,
+                        market=market,
+                        count=count,
+                        freshness=freshness.lower() if freshness in ["Day", "Week", "Month"] else freshness,
+                    )
+                ]
+            )
+        )
+        
+        # Create the Worker Agent (Agent 2)
+        agent_name = f"WorkerAgent-{company_name.replace(' ', '-')}-{market}"
+        agent = client.agents.create_version(
+            agent_name=agent_name,
+            definition=PromptAgentDefinition(
+                model=MODEL_DEPLOYMENT_NAME,
+                instructions=f"""You are a specialized risk analysis agent.
+Search for information about {company_name} focusing on {risk_category} risks.
+Provide comprehensive, factual results with sources.
+Market region: {market}""",
+                tools=[bing_tool],
+            ),
+            description=f"Ephemeral worker agent for {company_name} risk analysis",
+        )
+        
+        logger.info(f"✅ Worker Agent created: {agent.name} (id: {agent.id}, version: {agent.version})")
+        
+        # Execute the search using the Worker Agent
+        response = openai_client.responses.create(
+            tool_choice="required",
+            input=query,
+            extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+        )
+        
+        # Extract results and citations
+        output_text = response.output_text or ""
+        citations = []
+        
+        for item in response.output:
+            if hasattr(item, 'content') and item.content:
+                for content in item.content:
+                    if hasattr(content, 'annotations') and content.annotations:
+                        for annotation in content.annotations:
+                            if hasattr(annotation, 'url'):
+                                citations.append({
+                                    "url": annotation.url,
+                                    "title": getattr(annotation, 'title', ''),
+                                })
+        
+        result = {
+            "status": "success",
+            "company": company_name,
+            "risk_category": risk_category,
+            "market": market,
+            "worker_agent": {
+                "id": agent.id,
+                "name": agent.name,
+                "version": agent.version,
+            },
+            "analysis": output_text,
+            "citations": citations,
+            "citation_count": len(citations),
+        }
+        
+        logger.info(f"📊 Worker Agent completed analysis with {len(citations)} citations")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in create_and_run_bing_agent: {e}")
+        return {
+            "status": "error",
+            "company": company_name,
+            "risk_category": risk_category,
+            "market": market,
+            "error": str(e),
+        }
+        
+    finally:
+        # ALWAYS delete the Worker Agent after use
+        if agent and client:
+            try:
+                logger.info(f"🗑️  Deleting Worker Agent: {agent.name} v{agent.version}")
+                client.agents.delete_version(
+                    agent_name=agent.name,
+                    agent_version=agent.version
+                )
+                logger.info(f"✅ Worker Agent deleted successfully")
+            except Exception as e:
+                logger.warning(f"Failed to delete Worker Agent: {e}")
+        
+        if span_cm:
+            span_cm.__exit__(None, None, None)
+
+
 # ============================================================================
 # HTTP Handlers for MCP
 # ============================================================================
@@ -566,6 +781,25 @@ async def handle_list_tools(request: web.Request) -> web.Response:
             }
         },
         {
+            "name": "create_and_run_bing_agent",
+            "description": "Create an ephemeral Worker Agent with Bing tool, run risk analysis, and delete the agent. This implements the Two-Agent Pattern for Scenario 2.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "company_name": {"type": "string", "description": "Company name to analyze"},
+                    "risk_category": {
+                        "type": "string",
+                        "enum": ["litigation", "labor_practices", "environmental", "financial", "regulatory", "reputation", "all"],
+                        "default": "all"
+                    },
+                    "market": {"type": "string", "description": "Bing market code (e.g., 'en-US', 'de-DE')", "default": "en-US"},
+                    "count": {"type": "integer", "description": "Number of search results (1-50)", "default": 10},
+                    "freshness": {"type": "string", "description": "Time filter: 'Day', 'Week', 'Month'", "default": "Month"}
+                },
+                "required": ["company_name"]
+            }
+        },
+        {
             "name": "list_supported_markets",
             "description": "List all supported market codes for Bing search.",
             "inputSchema": {"type": "object", "properties": {}, "required": []}
@@ -644,6 +878,20 @@ async def handle_call_tool(request: web.Request) -> web.Response:
                 return web.json_response({"error": "company_name is required"}, status=400)
             
             result = await analyze_company_risk_rest_api(company_name, risk_category, market, count, freshness)
+            return web.json_response({"content": [{"type": "text", "text": json.dumps(result, indent=2)}]})
+        
+        elif name == "create_and_run_bing_agent":
+            # Scenario 2: Two-Agent Pattern - Create Worker Agent, run search, delete agent
+            company_name = arguments.get("company_name", "")
+            risk_category = arguments.get("risk_category", "all")
+            market = arguments.get("market", "en-US")
+            count = arguments.get("count", 10)
+            freshness = arguments.get("freshness", "Month")
+            
+            if not company_name:
+                return web.json_response({"error": "company_name is required"}, status=400)
+            
+            result = await create_and_run_bing_agent(company_name, risk_category, market, count, freshness)
             return web.json_response({"content": [{"type": "text", "text": json.dumps(result, indent=2)}]})
         
         elif name == "list_supported_markets":
@@ -733,6 +981,21 @@ async def handle_mcp(request: web.Request) -> web.Response:
                     }
                 },
                 {
+                    "name": "create_and_run_bing_agent",
+                    "description": "Create ephemeral Worker Agent with Bing tool, run search, delete agent (Scenario 2 Two-Agent Pattern).",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "company_name": {"type": "string"},
+                            "risk_category": {"type": "string", "default": "all"},
+                            "market": {"type": "string", "default": "en-US"},
+                            "count": {"type": "integer", "default": 10},
+                            "freshness": {"type": "string", "default": "Month"}
+                        },
+                        "required": ["company_name"]
+                    }
+                },
+                {
                     "name": "list_supported_markets",
                     "description": "List supported market codes.",
                     "inputSchema": {"type": "object", "properties": {}}
@@ -790,6 +1053,16 @@ async def handle_mcp(request: web.Request) -> web.Response:
                         arguments.get("freshness", "Month")
                     )
                     result = {"content": [{"type": "text", "text": json.dumps(risk_result, indent=2)}]}
+                elif name == "create_and_run_bing_agent":
+                    # Scenario 2: Two-Agent Pattern - Create Worker Agent, run, delete
+                    agent_result = await create_and_run_bing_agent(
+                        arguments.get("company_name", ""),
+                        arguments.get("risk_category", "all"),
+                        arguments.get("market", "en-US"),
+                        arguments.get("count", 10),
+                        arguments.get("freshness", "Month")
+                    )
+                    result = {"content": [{"type": "text", "text": json.dumps(agent_result, indent=2)}]}
                 elif name == "list_supported_markets":
                     result = {"content": [{"type": "text", "text": json.dumps({"markets": SUPPORTED_MARKETS})}]}
                 else:

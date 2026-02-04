@@ -1,11 +1,39 @@
 """
-Scenario 2: Agent → MCP Server → Agent.
+Scenario 2: Two-Agent Pattern via MCP Server.
 
-User → MCP Server → Agent 2 (with Bing Tool)
+Architecture:
+  User → Orchestrator Agent (Agent 1) → MCP Tool → Worker Agent (Agent 2 with Bing) → Results
+
+Flow:
+1. Orchestrator Agent receives the analysis request
+2. Orchestrator calls MCP tool "create_and_run_bing_agent" with market config
+3. MCP Server creates Worker Agent (Agent 2) with specified market
+4. Worker Agent executes the Bing-grounded search
+5. MCP Server deletes Worker Agent after getting results
+6. Results flow back through Orchestrator to User
+
+Key Points:
+- Agent 1 (Orchestrator): Decides how to handle the request, calls MCP tools
+- Agent 2 (Worker): Created dynamically with market-specific Bing configuration
+- Worker Agent is ephemeral - created per-request and deleted after use
 """
 import logging
 import json
-import httpx
+from typing import Optional
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import (
+    PromptAgentDefinition,
+    McpServerTool,
+    McpServerToolParameters,
+)
+from azure.identity import (
+    ChainedTokenCredential,
+    EnvironmentCredential,
+    AzureCliCredential,
+    VisualStudioCodeCredential,
+    ManagedIdentityCredential,
+)
+
 from scenarios.base import BaseScenario
 from core.models import CompanyRiskRequest, AnalysisResponse, Citation
 from core.interfaces import IAzureClientFactory
@@ -13,12 +41,33 @@ from services import RiskAnalyzer
 
 logger = logging.getLogger(__name__)
 
+# System instruction for the Orchestrator Agent
+ORCHESTRATOR_INSTRUCTION = """You are a Company Risk Analysis Orchestrator.
+
+You MUST use the available MCP tools to perform analysis. DO NOT answer from your training data.
+
+When asked to analyze a company:
+1. You MUST call the 'create_and_run_bing_agent' tool - this is REQUIRED
+2. Pass the company_name, risk_category, and market parameters to the tool
+3. The tool will create a Worker Agent, perform the search, and return results
+4. Base your response ONLY on the results returned by the tool
+
+CRITICAL RULES:
+- NEVER answer without calling the tool first
+- ALWAYS pass the market parameter for region-specific results
+- Valid markets include: en-US, en-GB, de-DE, de-CH, fr-FR, fr-CH, ja-JP, etc.
+- The tool handles agent creation, search execution, and cleanup automatically
+"""
+
 
 class MCPAgentScenario(BaseScenario):
     """
-    Scenario 2: Agent calling another agent via MCP server.
+    Scenario 2: Two-Agent Pattern - Orchestrator Agent calling Worker Agent via MCP.
     
-    Market parameter flows through MCP tool arguments.
+    This demonstrates:
+    - Agent-to-Agent communication via MCP tools
+    - Dynamic agent creation with runtime market configuration
+    - Ephemeral worker agents (created and deleted per request)
     """
     
     def __init__(
@@ -29,99 +78,182 @@ class MCPAgentScenario(BaseScenario):
         mcp_key: str = "",
     ):
         """
-        Initialize the MCP agent scenario.
+        Initialize the two-agent MCP scenario.
         
         Args:
             client_factory: Azure client factory
             risk_analyzer: Risk analysis service
-            mcp_url: MCP server URL
+            mcp_url: MCP server URL (HTTP endpoint)
             mcp_key: MCP server authentication key (optional)
         """
         super().__init__(client_factory, risk_analyzer)
         self.mcp_url = mcp_url
         self.mcp_key = mcp_key
+        self._project_client: Optional[AIProjectClient] = None
+        self._openai_client = None
+        self._orchestrator_agent = None
+        self._orchestrator_agent_name = "RiskAnalysisOrchestrator"
+    
+    def _get_credential(self):
+        """Get chained credential for Azure authentication."""
+        return ChainedTokenCredential(
+            EnvironmentCredential(),
+            AzureCliCredential(),
+            VisualStudioCodeCredential(),
+            ManagedIdentityCredential(),
+        )
+    
+    async def _ensure_initialized(self):
+        """Initialize clients and create Orchestrator Agent."""
+        if self._project_client is None:
+            credential = self._get_credential()
+            self._project_client = AIProjectClient(
+                endpoint=self.client_factory.config.project_endpoint,
+                credential=credential,
+            )
+            self._openai_client = self._project_client.get_openai_client()
+            
+            # Delete any existing orchestrator agent first (clean start)
+            await self._cleanup_existing_orchestrator()
+            
+            # Create the Orchestrator Agent with MCP tool
+            await self._create_orchestrator_agent()
+    
+    async def _cleanup_existing_orchestrator(self):
+        """Delete existing orchestrator agent if it exists."""
+        try:
+            # List agents and find any with our orchestrator name
+            agents = self._project_client.agents.list()
+            for agent in agents:
+                if agent.name == self._orchestrator_agent_name:
+                    logger.info(f"🗑️  Cleaning up existing orchestrator: {agent.name} v{agent.version}")
+                    self._project_client.agents.delete_version(
+                        agent_name=agent.name,
+                        agent_version=agent.version
+                    )
+        except Exception as e:
+            logger.debug(f"No existing orchestrator to clean up: {e}")
+    
+    async def _create_orchestrator_agent(self):
+        """Create the Orchestrator Agent with MCP Server tool."""
+        logger.info(f"🤖 Creating Orchestrator Agent: {self._orchestrator_agent_name}")
+        
+        # Configure MCP Server as a tool for the Orchestrator
+        # This allows Agent 1 to call MCP tools that create Agent 2
+        mcp_headers = {"Content-Type": "application/json"}
+        if self.mcp_key:
+            mcp_headers["x-functions-key"] = self.mcp_key
+        
+        mcp_tool = McpServerTool(
+            mcp=McpServerToolParameters(
+                server_url=self.mcp_url,
+                server_label="bing-mcp-server",
+                allowed_tools=["create_and_run_bing_agent", "analyze_company_risk"],
+                headers=mcp_headers,
+            )
+        )
+        
+        self._orchestrator_agent = self._project_client.agents.create_version(
+            agent_name=self._orchestrator_agent_name,
+            definition=PromptAgentDefinition(
+                model=self.client_factory.config.model_deployment_name,
+                instructions=ORCHESTRATOR_INSTRUCTION,
+                tools=[mcp_tool],
+            ),
+            description="Orchestrator agent that coordinates risk analysis via MCP tools",
+        )
+        
+        logger.info(
+            f"✅ Orchestrator Agent created: {self._orchestrator_agent.name} "
+            f"(id: {self._orchestrator_agent.id}, version: {self._orchestrator_agent.version})"
+        )
     
     async def execute(
         self,
         request: CompanyRiskRequest
     ) -> AnalysisResponse:
         """
-        Execute Scenario 2: Call MCP server with analyze_company_risk tool.
+        Execute Scenario 2: Two-Agent Pattern.
         
-        The MCP server creates an agent with the specified market.
+        1. Orchestrator Agent receives the request
+        2. Orchestrator calls MCP tool to create Worker Agent with market config
+        3. Worker Agent performs Bing-grounded search
+        4. Worker Agent is deleted by MCP server
+        5. Results returned through Orchestrator
         """
-        logger.info(f"Executing Scenario 2 for {request.company_name} via MCP")
+        logger.info(f"🚀 Scenario 2: Two-Agent Pattern for {request.company_name}")
+        logger.info(f"   Market: {request.search_config.market or 'default'}")
         
-        headers = {"Content-Type": "application/json"}
-        if self.mcp_key:
-            headers["x-functions-key"] = self.mcp_key
+        await self._ensure_initialized()
         
-        # Build MCP request
-        mcp_request = {
-            "jsonrpc": "2.0",
-            "id": "1",
-            "method": "tools/call",
-            "params": {
-                "name": "analyze_company_risk",
-                "arguments": {
-                    "company_name": request.company_name,
-                    "risk_category": request.risk_category.value,
-                    "market": request.search_config.market or "en-US"
+        # Build the prompt for the Orchestrator Agent
+        market = request.search_config.market or "en-US"
+        orchestrator_prompt = f"""Analyze the company "{request.company_name}" for {request.risk_category.value} risks.
+
+Use the create_and_run_bing_agent tool with the following parameters:
+- company_name: {request.company_name}
+- risk_category: {request.risk_category.value}
+- market: {market}
+
+The market parameter is important - it ensures the search uses the {market} regional Bing index.
+"""
+        
+        logger.info(f"📤 Sending request to Orchestrator Agent...")
+        
+        # Call the Orchestrator Agent
+        response = self._openai_client.responses.create(
+            tool_choice="required",  # Force the agent to use MCP tool
+            input=orchestrator_prompt,
+            extra_body={
+                "agent": {
+                    "name": self._orchestrator_agent.name,
+                    "type": "agent_reference"
                 }
+            },
+        )
+        
+        logger.info(f"✅ Orchestrator Agent responded")
+        
+        # Extract response text and citations
+        response_text = response.output_text or ""
+        citations = []
+        
+        for item in response.output:
+            if hasattr(item, 'content') and item.content:
+                for content in item.content:
+                    if hasattr(content, 'annotations') and content.annotations:
+                        for annotation in content.annotations:
+                            if hasattr(annotation, 'url'):
+                                citations.append(Citation(
+                                    url=annotation.url,
+                                    title=getattr(annotation, 'title', ''),
+                                    snippet=getattr(annotation, 'snippet', ''),
+                                ))
+        
+        return AnalysisResponse(
+            text=response_text,
+            citations=citations,
+            market_used=market,
+            metadata={
+                "scenario": "two_agent_mcp",
+                "orchestrator_agent_id": self._orchestrator_agent.id,
+                "orchestrator_agent_name": self._orchestrator_agent.name,
+                "orchestrator_agent_version": self._orchestrator_agent.version,
+                "mcp_url": self.mcp_url,
+                "risk_category": request.risk_category.value,
+                "pattern": "Orchestrator Agent → MCP Tool → Worker Agent (ephemeral)",
             }
-        }
-        
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                self.mcp_url,
-                headers=headers,
-                json=mcp_request
-            )
-            
-            if response.status_code != 200:
-                raise Exception(f"MCP error: HTTP {response.status_code}: {response.text}")
-            
-            data = response.json()
-            result_content = data.get("result", {}).get("content", [])
-            
-            # Extract text and agent info from response
-            response_text = ""
-            agent_info = {}
-            
-            for content in result_content:
-                if content.get("type") == "text":
-                    response_text = content.get("text", "")
-                    try:
-                        # Try to parse as JSON if it's a structured response
-                        parsed = json.loads(response_text)
-                        if isinstance(parsed, dict):
-                            # Extract agent information from MCP response
-                            if "agent_id" in parsed:
-                                agent_info["agent_id"] = parsed["agent_id"]
-                            if "agent_name" in parsed:
-                                agent_info["agent_name"] = parsed["agent_name"]
-                            if "agent_version" in parsed:
-                                agent_info["agent_version"] = parsed["agent_version"]
-                            
-                            if "search_results" in parsed:
-                                search_results = parsed["search_results"]
-                                if "results" in search_results:
-                                    response_text = search_results["results"][0].get("content", "")
-                    except:
-                        pass
-            
-            logger.info(f"✅ Scenario 2 complete via MCP")
-            if agent_info:
-                logger.info(f"   Agent created by MCP: {agent_info.get('agent_name', 'unknown')} (v{agent_info.get('agent_version', '?')})")
-            
-            return AnalysisResponse(
-                text=response_text,
-                citations=[],  # MCP response may not include structured citations
-                market_used=request.search_config.market,
-                metadata={
-                    "scenario": "mcp_agent_to_agent",
-                    "mcp_url": self.mcp_url,
-                    "risk_category": request.risk_category.value,
-                    **agent_info,  # Include agent info from MCP
-                }
-            )
+        )
+    
+    async def cleanup(self):
+        """Clean up the Orchestrator Agent."""
+        if self._orchestrator_agent and self._project_client:
+            try:
+                logger.info(f"🗑️  Cleaning up Orchestrator Agent: {self._orchestrator_agent.name}")
+                self._project_client.agents.delete_version(
+                    agent_name=self._orchestrator_agent.name,
+                    agent_version=self._orchestrator_agent.version
+                )
+            except Exception as e:
+                logger.warning(f"Failed to cleanup orchestrator: {e}")
+

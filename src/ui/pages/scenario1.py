@@ -4,7 +4,7 @@ Scenario 1 UI page: Direct Agent with Bing Tool.
 import sys
 from pathlib import Path
 
-# Add src to path
+# Add src to path (go up from pages -> ui -> src)
 src_path = Path(__file__).parent.parent.parent
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
@@ -12,10 +12,10 @@ if str(src_path) not in sys.path:
 import streamlit as st
 import asyncio
 import datetime
-from src.infrastructure import AzureConfig, AzureClientFactory, MARKET_OPTIONS
-from src.services import RiskAnalyzer
-from src.scenarios import DirectAgentScenario
-from src.core.models import CompanyRiskRequest, SearchConfig, RiskCategory, ScenarioType
+from infrastructure import AzureConfig, AzureClientFactory, MARKET_OPTIONS
+from services import RiskAnalyzer
+from scenarios import DirectAgentScenario
+from core.models import CompanyRiskRequest, SearchConfig, RiskCategory, ScenarioType
 
 
 def render_scenario1(config: AzureConfig):
@@ -105,19 +105,18 @@ def render_scenario1(config: AzureConfig):
                 f"Analysis: {result['company']} | Market: {result['market'] or 'Default'} | {result['timestamp']}",
                 expanded=(i == 0)
             ):
-                # Agent Information
-                st.caption("**🤖 Agent Information:**")
-                agent_col1, agent_col2, agent_col3 = st.columns(3)
+                # Agent Information (visible in Foundry portal)
+                st.caption("**🤖 Agent Information (View in Azure AI Foundry Portal):**")
+                agent_col1, agent_col2 = st.columns(2)
                 with agent_col1:
                     st.metric("Agent Name", result.get('agent_name', 'N/A'))
+                    if result.get('agent_id'):
+                        st.code(result['agent_id'], language=None)
                 with agent_col2:
-                    st.metric("Version", result.get('agent_version', 'N/A'))
-                with agent_col3:
-                    st.metric("Agent ID", result.get('agent_id', 'N/A')[:8] + '...' if result.get('agent_id') else 'N/A')
+                    st.metric("Agent Version", result.get('agent_version', 'N/A'))
+                    if result.get('agent_version'):
+                        st.code(f"v{result['agent_version']}", language=None)
                 
-                st.markdown("---")
-                st.caption("**🔧 Tool Configuration:**")
-                st.json(result['tool_config'])
                 st.markdown("---")
                 st.markdown(result['text'])
                 
@@ -168,7 +167,6 @@ def run_scenario1_analysis(
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "text": response.text,
                 "citations": [{"url": c.url, "title": c.title} for c in response.citations],
-                "tool_config": response.metadata.get("tool_config", {}),
                 "agent_id": response.metadata.get("agent_id"),
                 "agent_name": response.metadata.get("agent_name"),
                 "agent_version": response.metadata.get("agent_version"),

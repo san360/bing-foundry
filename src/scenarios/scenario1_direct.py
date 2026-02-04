@@ -2,19 +2,21 @@
 Scenario 1: Direct Agent with Bing Tool.
 
 User → AI Agent (with Bing Grounding Tool attached directly)
+
+Uses Azure AI Projects SDK New Agents API for versioned agents visible in Foundry portal.
+Executes via OpenAI Responses API.
 """
 import logging
 from typing import Optional
-try:
-    from opentelemetry import trace
-    tracer = trace.get_tracer(__name__)
-except ImportError:
-    tracer = None
+from infrastructure.tracing import get_tracer
+
+# Get tracer for this module (uses OpenTelemetry if available)
+tracer = get_tracer(__name__)
 
 from scenarios.base import BaseScenario
 from core.models import CompanyRiskRequest, AnalysisResponse
 from core.interfaces import IAzureClientFactory
-from services import RiskAnalyzer, BingToolBuilder, AgentService, AGENT_SYSTEM_INSTRUCTION
+from services import RiskAnalyzer, AgentService, AGENT_SYSTEM_INSTRUCTION
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ class DirectAgentScenario(BaseScenario):
     Scenario 1: Direct agent with Bing tool.
     
     Market parameter is configured at tool creation time.
+    Creates versioned agents visible in Foundry portal.
     """
     
     def __init__(
@@ -51,94 +54,77 @@ class DirectAgentScenario(BaseScenario):
         """
         Execute Scenario 1: Direct agent with Bing tool.
         
-        The market parameter is set at tool creation time.
-        """
-        span_context = None
-        if tracer:
-            span_context = tracer.start_as_current_span(
-                "scenario1.direct_agent",
-                attributes={
-                    "scenario": "direct_agent",
-                    "company": request.company_name,
-                    "market": request.search_config.market or "default",
-                }
-            )
+        Creates a versioned agent (visible in Foundry portal),
+        then executes via OpenAI Responses API.
         
-        try:
-            if span_context:
-                span_context.__enter__()
-            
-            # Build Bing tool with market configuration
-            bing_connection_id = self.client_factory.get_bing_connection_id()
-            tool_builder = BingToolBuilder(bing_connection_id)
-            bing_tool = tool_builder.build(request.search_config)
-            
-            # Generate prompt
-            prompt = self.risk_analyzer.get_analysis_prompt(request)
-            
-            # Create agent with Bing tool
-            agent_name = f"CompanyRiskAnalyst-{request.search_config.market or 'default'}"
-            
-            project_client = self.client_factory.get_project_client()
-            openai_client = self.client_factory.get_openai_client()
-            
-            from azure.ai.projects.models import PromptAgentDefinition
-            
-            agent = project_client.agents.create_version(
-                agent_name=agent_name,
-                definition=PromptAgentDefinition(
-                    model=self.model_name,
-                    instructions=AGENT_SYSTEM_INSTRUCTION,
-                    tools=[bing_tool],
-                ),
-                description="Company risk analysis agent with Bing grounding",
-            )
-            
+        Tracing is automatically captured via AIAgentsInstrumentor.
+        """
+        agent_info = None
+        
+        # Create span for the entire scenario execution
+        with tracer.start_as_current_span(
+            "scenario1.direct_agent",
+            attributes={
+                "scenario": "direct_agent",
+                "company": request.company_name,
+                "market": request.search_config.market or "default",
+            }
+        ) as span:
             try:
-                # Execute the analysis
-                logger.info(f"✅ Created Agent: {agent.name} (v{agent.version})")
-                logger.info(f"   Agent ID: {agent.id}")
-                logger.info(f"🔍 Starting analysis for {request.company_name}...")
+                # Get Bing connection ID
+                bing_connection_id = self.client_factory.get_bing_connection_id()
                 
-                response = openai_client.responses.create(
-                    tool_choice="required",
-                    input=prompt,
-                    extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+                # Generate prompt
+                prompt = self.risk_analyzer.get_analysis_prompt(request)
+                
+                # Create versioned agent with Bing tool (visible in Foundry portal)
+                agent_name = f"CompanyRiskAnalyst-{request.search_config.market or 'default'}"
+                
+                agent_info = self.agent_service.create_agent(
+                    name=agent_name,
+                    instructions=AGENT_SYSTEM_INSTRUCTION,
+                    bing_connection_id=bing_connection_id,
                 )
                 
-                # Extract citations
-                citations = self.agent_service._extract_citations(response)
+                # Add agent info to span for tracing
+                span.set_attribute("agent.id", agent_info['agent_id'])
+                span.set_attribute("agent.name", agent_info['agent_name'])
+                span.set_attribute("agent.version", agent_info.get('agent_version', 'N/A'))
                 
-                logger.info(f"✅ Analysis complete: {len(citations)} citations found")
+                logger.info(f"🔍 Starting analysis for {request.company_name}...")
+                logger.info(f"   View in Foundry Portal - Agent: {agent_info['agent_name']} (v{agent_info.get('agent_version', 'N/A')})")
+                logger.info(f"   Agent ID: {agent_info['agent_id']}")
+                
+                # Execute via Responses API
+                response = self.agent_service.run_agent_via_responses(
+                    agent_name=agent_info['agent_name'],
+                    agent_version=agent_info.get('agent_version'),
+                    prompt=prompt,
+                    tool_choice="required",
+                )
+                
+                logger.info(f"✅ Analysis complete: {len(response.citations)} citations found")
+                span.set_attribute("citations.count", len(response.citations))
                 
                 return AnalysisResponse(
-                    text=response.output_text,
-                    citations=citations,
+                    text=response.text,
+                    citations=response.citations,
                     market_used=request.search_config.market,
                     metadata={
                         "scenario": "direct_agent",
-                        "agent_id": agent.id,
-                        "agent_name": agent.name,
-                        "agent_version": agent.version,
-                        "tool_config": tool_builder.get_config_info(request.search_config),
+                        "agent_id": agent_info['agent_id'],
+                        "agent_name": agent_info['agent_name'],
+                        "agent_version": agent_info.get('agent_version'),
+                        "market": request.search_config.market or "default",
                     }
                 )
             
+            except Exception as e:
+                logger.error(f"Error in Scenario 1: {e}")
+                span.record_exception(e)
+                raise
+            
             finally:
-                # Clean up agent
-                project_client.agents.delete_version(
-                    agent_name=agent.name,
-                    agent_version=agent.version
-                )
-        
-        except Exception as e:
-            logger.error(f"Error in Scenario 1: {e}")
-            if tracer and span_context:
-                current_span = trace.get_current_span()
-                current_span.record_exception(e)
-                current_span.set_status(trace.StatusCode.ERROR, str(e))
-            raise
-        
-        finally:
-            if span_context:
-                span_context.__exit__(None, None, None)
+                # Clean up agent (optional - comment out to keep agents for inspection)
+                if agent_info:
+                    self.agent_service.delete_agent(agent_info['agent_name'])

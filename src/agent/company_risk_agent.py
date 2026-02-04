@@ -336,11 +336,13 @@ class CompanyRiskAgent:
                 
             finally:
                 # Clean up the agent version
-                logger.debug(f"Cleaning up agent version: {agent.name} v{agent.version}")
-                self._project_client.agents.delete_version(
-                    agent_name=agent.name, 
-                    agent_version=agent.version
-                )
+                # NOTE: Commented out to keep agents visible in Foundry portal for inspection
+                # logger.debug(f"Cleaning up agent version: {agent.name} v{agent.version}")
+                # self._project_client.agents.delete_version(
+                #     agent_name=agent.name, 
+                #     agent_version=agent.version
+                # )
+                pass
                 
         except Exception as e:
             # Record exception in span
@@ -418,10 +420,12 @@ class CompanyRiskAgent:
                                         
         finally:
             # Clean up
-            self._project_client.agents.delete_version(
-                agent_name=agent.name,
-                agent_version=agent.version
-            )
+            # NOTE: Commented out to keep agents visible in Foundry portal for inspection
+            # self._project_client.agents.delete_version(
+            #     agent_name=agent.name,
+            #     agent_version=agent.version
+            # )
+            pass
             
     async def close(self):
         """Close the client connections"""

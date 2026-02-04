@@ -12,7 +12,6 @@ from core.models import (
 
 from core.interfaces import (
     ISearchService,
-    IAgentService,
     IRiskAnalyzer,
     IScenarioExecutor,
     IAzureClientFactory,
@@ -28,7 +27,6 @@ __all__ = [
     "CompanyRiskRequest",
     "AnalysisResult",
     "ISearchService",
-    "IAgentService",
     "IRiskAnalyzer",
     "IScenarioExecutor",
     "IAzureClientFactory",
