@@ -81,7 +81,7 @@ Should return: `{"status": "healthy", "server": "bing-grounding-mcp"}`
 
 **No devtunnel needed** - Agent directly uses Bing Grounding API.
 
-**Code Location:** [`src/app.py`](../src/app.py) - `render_direct_agent_scenario()`
+**Code Location:** [`src/ui/pages/scenario1.py`](../src/ui/pages/scenario1.py) - Direct agent scenario
 
 **How it works:**
 ```python
@@ -130,7 +130,7 @@ run = project_client.agents.create_and_process_run(
 **Requires devtunnel** if MCP server is running locally.
 
 **Code Location:** 
-- Streamlit UI: [`src/app.py`](../src/app.py) - `render_mcp_agent_scenario()`
+- Streamlit UI: [`src/ui/pages/scenario2.py`](../src/ui/pages/scenario2.py) - MCP agent scenario
 - MCP Server: [`mcp-server-local/mcp_server.py`](../mcp-server-local/mcp_server.py)
 
 **Architecture:**
@@ -202,7 +202,7 @@ async def handle_call_tool(name: str, arguments: dict):
 **Requires devtunnel** if MCP server is running locally.
 
 **Code Location:**
-- Streamlit UI: [`src/app.py`](../src/app.py) - `render_rest_api_scenario()`
+- Streamlit UI: [`src/ui/pages/scenario3.py`](../src/ui/pages/scenario3.py) - Agent with MCP tool scenario
 - MCP Server: [`mcp-server-local/mcp_server_http.py`](../mcp-server-local/mcp_server_http.py)
 
 **Architecture:**

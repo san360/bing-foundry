@@ -236,7 +236,7 @@ pip install -r requirements.txt
 ### 8. Run the Application
 
 ```bash
-streamlit run src/app.py
+streamlit run src/ui/app.py
 ```
 
 ### 9. Deactivate Virtual Environment (when done)

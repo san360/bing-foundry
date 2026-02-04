@@ -1,5 +1,22 @@
 # Improvements Summary
 
+## ⚠️ IMPORTANT: Correct Entry Point
+
+**Old (DELETED):** `src/app.py` (1788 lines - monolithic)  
+**New (USE THIS):** `src/ui/app.py` (103 lines - refactored)
+
+### Running the Application:
+```bash
+streamlit run src/ui/app.py  # ✅ Correct
+```
+
+**NOT:**
+```bash
+streamlit run src/app.py     # ❌ File deleted
+```
+
+---
+
 ## Issues Fixed ✅
 
 ### 1. Scenario 3 - Tool Configuration Clarified ✅
