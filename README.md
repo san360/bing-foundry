@@ -434,11 +434,89 @@ pip install -r requirements.txt
 streamlit run src/ui/app.py
 ```
 
+The application will open in your browser at `http://localhost:8501`
+
 ### 9. Deactivate Virtual Environment (when done)
 
 ```bash
 deactivate
 ```
+
+---
+
+## 🔌 Running MCP Server (for Scenarios 2-5)
+
+The MCP server is required for Scenarios 2, 3, 4, and 5. Choose one of the following options:
+
+### Option A: Local HTTP Server (Recommended for Development)
+
+```bash
+cd mcp-server-local
+./run-mcp-http-local.sh
+```
+
+The MCP server will start on `http://localhost:8000/mcp`
+
+### Option B: Using devtunnel (Required for Remote/Cloud Access)
+
+For scenarios requiring a publicly accessible MCP server:
+
+```bash
+# Install devtunnel
+# See: https://learn.microsoft.com/azure/developer/dev-tunnels/get-started
+
+# Create and host tunnel
+devtunnel create --allow-anonymous
+devtunnel port create <tunnel-id> -p 8000
+devtunnel host <tunnel-id>
+
+# Use the URL: https://<tunnel-id>.devtunnels.ms/mcp
+```
+
+### Option C: Docker
+
+```bash
+cd mcp-server-local
+docker build -f Dockerfile.http -t bing-mcp-server .
+docker run -p 8000:8000 --env-file .env bing-mcp-server
+```
+
+---
+
+## 🔧 Troubleshooting
+
+### Issue: `streamlit: command not found`
+**Solution:** Make sure you activated the virtual environment and installed dependencies:
+```bash
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+pip install -r requirements.txt
+```
+
+### Issue: Missing environment variables
+**Solution:** Create `.env` file with required variables:
+```bash
+AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
+AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
+BING_PROJECT_CONNECTION_NAME="your-bing-connection-name"
+MCP_SERVER_URL="http://localhost:8000/mcp"
+```
+
+### Issue: MCP Server connection failed (Scenarios 2-5)
+**Solution:** 
+1. Check MCP server is running: `./run-mcp-http-local.sh`
+2. Verify URL in UI matches server address
+3. For remote access, use devtunnel
+
+### Issue: Azure authentication failed
+**Solution:** Run `az login` to authenticate with Azure CLI
+
+### Issue: Agent not found (404 error)
+**Solution:** The agent may have been deleted. Restart the app to create a new agent.
+
+### Issue: No citations returned
+**Solution:** Ensure the MCP server is returning citations in the expected format. Check MCP server logs.
+
+---
 
 ## 🧪 Testing Market Parameter Behavior
 
