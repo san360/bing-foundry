@@ -49,6 +49,7 @@ from ui.components.sidebar import render_sidebar
 from ui.pages.scenario1 import render_scenario1
 from ui.pages.scenario2 import render_scenario2
 from ui.pages.scenario3 import render_scenario3
+from ui.pages.scenario4 import render_scenario4
 from ui.pages.documentation import render_documentation
 
 logger.info(f"Tracing enabled: {tracing_enabled}")
@@ -62,6 +63,8 @@ def init_session_state():
         st.session_state.mcp_results = []
     if "rest_api_results" not in st.session_state:
         st.session_state.rest_api_results = []
+    if "multi_market_results" not in st.session_state:
+        st.session_state.multi_market_results = []
     if "config_valid" not in st.session_state:
         st.session_state.config_valid = False
     if "mcp_connected" not in st.session_state:
@@ -82,10 +85,11 @@ def main():
     
     # Main content area with tabs
     logger.info("Creating tabs...")
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🎯 Scenario 1: Direct Agent",
-        "🔗 Scenario 2: MCP Agent→Agent",
-        "🌐 Scenario 3: Agent→MCP→REST",
+        "🔗 Scenario 2: Two-Agent",
+        "🌐 Scenario 3: MCP REST",
+        "🌍 Scenario 4: Multi-Market",
         "📖 Documentation"
     ])
     
@@ -100,6 +104,9 @@ def main():
         render_scenario3(config)
     
     with tab4:
+        render_scenario4(config)
+    
+    with tab5:
         render_documentation()
     
     logger.info("Application rendering complete")

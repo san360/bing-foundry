@@ -55,18 +55,20 @@ class MCPRestAPIScenario(BaseScenario):
         """
         Execute Scenario 3: Agent with MCP tool calling REST API.
         
-        Creates a versioned agent (visible in Foundry portal),
+        Gets or creates a versioned agent (visible in Foundry portal),
         then executes via OpenAI Responses API.
         
         Tracing is automatically captured via AIAgentsInstrumentor.
         """
         # Create span for the entire scenario
+        market = request.search_config.market or "default"
+        
         with tracer.start_as_current_span(
             "scenario3.mcp_rest_api",
             attributes={
                 "scenario": "mcp_rest_api",
                 "company": request.company_name,
-                "market": request.search_config.market or "default",
+                "market": market,
                 "mcp_url": self.mcp_url,
             }
         ) as span:
@@ -75,46 +77,63 @@ class MCPRestAPIScenario(BaseScenario):
             project_client = self.client_factory.get_project_client()
             openai_client = self.client_factory.get_openai_client()
             
-            # Create MCP Tool pointing to our server
-            mcp_tool = MCPTool(
-                server_label="bing_rest_api_mcp",
-                server_url=self.mcp_url,
-                require_approval="never",
-                allowed_tools=["bing_search_rest_api"],
-            )
+            # Standard naming: BingFoundry-Scenario3-MCPAgent (no market in name)
+            agent_name = "BingFoundry-Scenario3-MCPAgent"
             
-            logger.info(f"✅ Created MCP Tool with REST API wrapper: {self.mcp_url}")
+            # Try to find existing agent
+            agent = None
+            try:
+                agents = list(project_client.agents.list())
+                for existing_agent in agents:
+                    if existing_agent.name == agent_name:
+                        logger.info(f"♻️  Reusing existing agent: {agent_name} (v{existing_agent.version})")
+                        agent = existing_agent
+                        break
+            except Exception as e:
+                logger.debug(f"Could not list agents: {e}")
             
-            # Create agent definition with MCP tool
-            definition = PromptAgentDefinition(
-                model=self.model_name,
-                instructions=f"""You are a company risk analysis assistant.
+            # Create new agent if not found
+            if agent is None:
+                # Create MCP Tool pointing to our server
+                mcp_tool = MCPTool(
+                    server_label="bing_rest_api_mcp",
+                    server_url=self.mcp_url,
+                    require_approval="never",
+                    allowed_tools=["bing_search_rest_api"],
+                )
+                
+                logger.info(f"✅ Created MCP Tool with REST API wrapper: {self.mcp_url}")
+                
+                # Create agent definition with MCP tool
+                definition = PromptAgentDefinition(
+                    model=self.model_name,
+                    instructions=f"""You are a company risk analysis assistant.
 You MUST use the available MCP tools to search for information. DO NOT answer from your training data.
 
 When asked to analyze a company:
 1. ALWAYS call the bing_search_rest_api tool to get current information
-2. Use market parameter '{request.search_config.market or "en-US"}' for regional results
+2. Use market parameter '{market}' for regional results
 3. Search for: recent news, legal issues, regulatory violations, ESG concerns
 4. Base your analysis ONLY on the search results returned by the tool
 
 IMPORTANT: You must call the tool for EVERY request. Never skip the tool call.""",
-                tools=[mcp_tool],
-            )
-            
-            # Create versioned agent (visible in Foundry portal)
-            agent_name = "CompanyRiskAnalyst-MCP"
-            agent = project_client.agents.create_version(
-                agent_name=agent_name,
-                definition=definition,
-                description="Company risk analyst using MCP tool for Bing search",
-            )
+                    tools=[mcp_tool],
+                )
+                
+                # Create versioned agent (visible in Foundry portal)
+                agent = project_client.agents.create_version(
+                    agent_name=agent_name,
+                    definition=definition,
+                    description="Company risk analyst using MCP tool for Bing search",
+                )
+                
+                logger.info(f"✅ Created new agent: {agent.name} (v{agent.version})")
             
             # Add agent info to span for tracing
             span.set_attribute("agent.id", agent.id)
             span.set_attribute("agent.name", agent.name)
             span.set_attribute("agent.version", agent.version)
             
-            logger.info(f"✅ Created Agent: {agent.name} (version: {agent.version})")
             logger.info(f"   Agent ID: {agent.id}")
             logger.info(f"   View in Foundry Portal!")
             
@@ -170,13 +189,3 @@ IMPORTANT: You must call the tool for EVERY request. Never skip the tool call.""
             except Exception as e:
                 span.record_exception(e)
                 raise
-            
-            finally:
-                # Clean up agent (optional - comment out to keep for inspection)
-                # NOTE: Commented out to keep agents visible in Foundry portal for inspection
-                # project_client.agents.delete_version(
-                #     agent_name=agent.name,
-                #     agent_version=agent.version
-                # )
-                # logger.info(f"🗑️  Cleaned up agent: {agent.name}")
-                pass

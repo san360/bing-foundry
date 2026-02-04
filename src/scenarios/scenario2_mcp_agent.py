@@ -23,8 +23,7 @@ from typing import Optional
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import (
     PromptAgentDefinition,
-    McpServerTool,
-    McpServerToolParameters,
+    MCPTool,
 )
 from azure.identity import (
     ChainedTokenCredential,
@@ -92,7 +91,8 @@ class MCPAgentScenario(BaseScenario):
         self._project_client: Optional[AIProjectClient] = None
         self._openai_client = None
         self._orchestrator_agent = None
-        self._orchestrator_agent_name = "RiskAnalysisOrchestrator"
+        # Standard naming: BingFoundry-Scenario2-Orchestrator (no market in name)
+        self._orchestrator_agent_name = "BingFoundry-Scenario2-Orchestrator"
     
     def _get_credential(self):
         """Get chained credential for Azure authentication."""
@@ -104,7 +104,7 @@ class MCPAgentScenario(BaseScenario):
         )
     
     async def _ensure_initialized(self):
-        """Initialize clients and create Orchestrator Agent."""
+        """Initialize clients and get or create Orchestrator Agent."""
         if self._project_client is None:
             credential = self._get_credential()
             self._project_client = AIProjectClient(
@@ -113,26 +113,24 @@ class MCPAgentScenario(BaseScenario):
             )
             self._openai_client = self._project_client.get_openai_client()
             
-            # Delete any existing orchestrator agent first (clean start)
-            await self._cleanup_existing_orchestrator()
-            
-            # Create the Orchestrator Agent with MCP tool
-            await self._create_orchestrator_agent()
+            # Get or create the Orchestrator Agent with MCP tool
+            await self._get_or_create_orchestrator_agent()
     
-    async def _cleanup_existing_orchestrator(self):
-        """Delete existing orchestrator agent if it exists."""
+    async def _get_or_create_orchestrator_agent(self):
+        """Get existing Orchestrator Agent or create a new one."""
+        # Check if agent already exists
         try:
-            # List agents and find any with our orchestrator name
-            agents = self._project_client.agents.list()
+            agents = list(self._project_client.agents.list())
             for agent in agents:
                 if agent.name == self._orchestrator_agent_name:
-                    logger.info(f"🗑️  Cleaning up existing orchestrator: {agent.name} v{agent.version}")
-                    self._project_client.agents.delete_version(
-                        agent_name=agent.name,
-                        agent_version=agent.version
-                    )
+                    logger.info(f"♻️  Reusing existing Orchestrator Agent: {agent.name} (v{agent.version})")
+                    self._orchestrator_agent = agent
+                    return
         except Exception as e:
-            logger.debug(f"No existing orchestrator to clean up: {e}")
+            logger.debug(f"Could not list agents: {e}")
+        
+        # Create new Orchestrator Agent
+        await self._create_orchestrator_agent()
     
     async def _create_orchestrator_agent(self):
         """Create the Orchestrator Agent with MCP Server tool."""
@@ -140,17 +138,12 @@ class MCPAgentScenario(BaseScenario):
         
         # Configure MCP Server as a tool for the Orchestrator
         # This allows Agent 1 to call MCP tools that create Agent 2
-        mcp_headers = {"Content-Type": "application/json"}
-        if self.mcp_key:
-            mcp_headers["x-functions-key"] = self.mcp_key
-        
-        mcp_tool = McpServerTool(
-            mcp=McpServerToolParameters(
-                server_url=self.mcp_url,
-                server_label="bing-mcp-server",
-                allowed_tools=["create_and_run_bing_agent", "analyze_company_risk"],
-                headers=mcp_headers,
-            )
+        # Reference: https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/custom-code-interpreter
+        mcp_tool = MCPTool(
+            server_label="bing_mcp_server",  # Must be alphanumeric and underscores only
+            server_url=self.mcp_url,
+            require_approval="never",
+            allowed_tools=["create_and_run_bing_agent", "analyze_company_risk"],
         )
         
         self._orchestrator_agent = self._project_client.agents.create_version(
@@ -241,19 +234,7 @@ The market parameter is important - it ensures the search uses the {market} regi
                 "orchestrator_agent_version": self._orchestrator_agent.version,
                 "mcp_url": self.mcp_url,
                 "risk_category": request.risk_category.value,
-                "pattern": "Orchestrator Agent → MCP Tool → Worker Agent (ephemeral)",
+                "pattern": "Orchestrator Agent → MCP Tool → Worker Agent",
             }
         )
-    
-    async def cleanup(self):
-        """Clean up the Orchestrator Agent."""
-        if self._orchestrator_agent and self._project_client:
-            try:
-                logger.info(f"🗑️  Cleaning up Orchestrator Agent: {self._orchestrator_agent.name}")
-                self._project_client.agents.delete_version(
-                    agent_name=self._orchestrator_agent.name,
-                    agent_version=self._orchestrator_agent.version
-                )
-            except Exception as e:
-                logger.warning(f"Failed to cleanup orchestrator: {e}")
 

@@ -77,10 +77,11 @@ class DirectAgentScenario(BaseScenario):
                 # Generate prompt
                 prompt = self.risk_analyzer.get_analysis_prompt(request)
                 
-                # Create versioned agent with Bing tool (visible in Foundry portal)
-                agent_name = f"CompanyRiskAnalyst-{request.search_config.market or 'default'}"
+                # Standard naming: BingFoundry-Scenario1-DirectAgent (no market in name)
+                agent_name = "BingFoundry-Scenario1-DirectAgent"
                 
-                agent_info = self.agent_service.create_agent(
+                # Get or create agent (reuses existing if available)
+                agent_info = self.agent_service.get_or_create_agent(
                     name=agent_name,
                     instructions=AGENT_SYSTEM_INSTRUCTION,
                     bing_connection_id=bing_connection_id,
@@ -123,8 +124,3 @@ class DirectAgentScenario(BaseScenario):
                 logger.error(f"Error in Scenario 1: {e}")
                 span.record_exception(e)
                 raise
-            
-            finally:
-                # Clean up agent (optional - comment out to keep agents for inspection)
-                if agent_info:
-                    self.agent_service.delete_agent(agent_info['agent_name'])

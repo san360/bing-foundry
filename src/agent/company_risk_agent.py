@@ -232,24 +232,40 @@ class CompanyRiskAgent:
                 
             await self._ensure_initialized()
         
-            # Create tool with specified market configuration
-            # THIS IS THE KEY: Market is set per-tool, per-request!
-            bing_tool = self._create_bing_tool(
-                market=market,
-                count=count,
-                freshness=freshness,
-            )
+            # Standard naming: BingFoundry-RiskAgent (no market in name)
+            agent_name = "BingFoundry-RiskAgent"
             
-            # Create agent with this specific tool configuration
-            agent = self._project_client.agents.create_version(
-                agent_name=f"CompanyRiskAnalyst-{market or 'default'}",
-                definition=PromptAgentDefinition(
-                    model=self.model_deployment_name,
-                    instructions=AGENT_SYSTEM_INSTRUCTION,
-                    tools=[bing_tool],
-                ),
-                description="Company risk analysis agent with Bing grounding",
-            )
+            # Try to find existing agent
+            agent = None
+            try:
+                agents = list(self._project_client.agents.list())
+                for existing_agent in agents:
+                    if existing_agent.name == agent_name:
+                        logger.info(f"♻️  Reusing existing agent: {agent_name} (v{existing_agent.version})")
+                        agent = existing_agent
+                        break
+            except Exception as e:
+                logger.debug(f"Could not list agents: {e}")
+            
+            # Create new agent if not found
+            if agent is None:
+                # Create tool with specified market configuration
+                bing_tool = self._create_bing_tool(
+                    market=market,
+                    count=count,
+                    freshness=freshness,
+                )
+                
+                agent = self._project_client.agents.create_version(
+                    agent_name=agent_name,
+                    definition=PromptAgentDefinition(
+                        model=self.model_deployment_name,
+                        instructions=AGENT_SYSTEM_INSTRUCTION,
+                        tools=[bing_tool],
+                    ),
+                    description="Company risk analysis agent with Bing grounding",
+                )
+                logger.info(f"✅ Created new agent: {agent.name} (v{agent.version})")
             
             try:
                 # Execute the analysis
@@ -334,16 +350,6 @@ class CompanyRiskAgent:
                 logger.error(f"Full traceback:\n{traceback.format_exc()}")
                 raise
                 
-            finally:
-                # Clean up the agent version
-                # NOTE: Commented out to keep agents visible in Foundry portal for inspection
-                # logger.debug(f"Cleaning up agent version: {agent.name} v{agent.version}")
-                # self._project_client.agents.delete_version(
-                #     agent_name=agent.name, 
-                #     agent_version=agent.version
-                # )
-                pass
-                
         except Exception as e:
             # Record exception in span
             if tracer and span_context:
@@ -378,54 +384,60 @@ class CompanyRiskAgent:
         """
         await self._ensure_initialized()
         
-        # Create tool with specified market configuration
-        bing_tool = self._create_bing_tool(
-            market=market,
-            count=count,
-            freshness=freshness,
-        )
+        # Standard naming: BingFoundry-RiskAgent-Stream (no market in name)
+        agent_name = "BingFoundry-RiskAgent-Stream"
         
-        # Create agent
-        agent = self._project_client.agents.create_version(
-            agent_name=f"CompanyRiskAnalyst-Stream-{market or 'default'}",
-            definition=PromptAgentDefinition(
-                model=self.model_deployment_name,
-                instructions=AGENT_SYSTEM_INSTRUCTION,
-                tools=[bing_tool],
-            ),
-        )
-        
+        # Try to find existing agent
+        agent = None
         try:
-            # Stream the response
-            stream_response = self._openai_client.responses.create(
-                stream=True,
-                tool_choice="required",
-                input=prompt,
-                extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+            agents = list(self._project_client.agents.list())
+            for existing_agent in agents:
+                if existing_agent.name == agent_name:
+                    logger.info(f"♻️  Reusing existing streaming agent: {agent_name}")
+                    agent = existing_agent
+                    break
+        except Exception as e:
+            logger.debug(f"Could not list agents: {e}")
+        
+        # Create new agent if not found
+        if agent is None:
+            bing_tool = self._create_bing_tool(
+                market=market,
+                count=count,
+                freshness=freshness,
             )
             
-            for event in stream_response:
-                if event.type == "response.output_text.delta":
-                    yield event.delta
-                elif event.type == "response.output_item.done":
-                    # Yield citations at the end
-                    if event.item.type == "message":
-                        item = event.item
-                        if item.content and len(item.content) > 0:
-                            last_content = item.content[-1]
-                            if hasattr(last_content, 'annotations'):
-                                for annotation in last_content.annotations:
-                                    if annotation.type == "url_citation":
-                                        yield f"\n[Source: {annotation.url}]"
-                                        
-        finally:
-            # Clean up
-            # NOTE: Commented out to keep agents visible in Foundry portal for inspection
-            # self._project_client.agents.delete_version(
-            #     agent_name=agent.name,
-            #     agent_version=agent.version
-            # )
-            pass
+            agent = self._project_client.agents.create_version(
+                agent_name=agent_name,
+                definition=PromptAgentDefinition(
+                    model=self.model_deployment_name,
+                    instructions=AGENT_SYSTEM_INSTRUCTION,
+                    tools=[bing_tool],
+                ),
+            )
+            logger.info(f"✅ Created new streaming agent: {agent.name}")
+        
+        # Stream the response
+        stream_response = self._openai_client.responses.create(
+            stream=True,
+            tool_choice="required",
+            input=prompt,
+            extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+        )
+        
+        for event in stream_response:
+            if event.type == "response.output_text.delta":
+                yield event.delta
+            elif event.type == "response.output_item.done":
+                # Yield citations at the end
+                if event.item.type == "message":
+                    item = event.item
+                    if item.content and len(item.content) > 0:
+                        last_content = item.content[-1]
+                        if hasattr(last_content, 'annotations'):
+                            for annotation in last_content.annotations:
+                                if annotation.type == "url_citation":
+                                    yield f"\n[Source: {annotation.url}]"
             
     async def close(self):
         """Close the client connections"""

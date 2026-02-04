@@ -3,6 +3,14 @@ Agent service for managing AI agent lifecycle.
 
 Uses Azure AI Projects SDK (v2.0.0b3+) New Agents API with versioned agents.
 Agents are visible in Foundry portal. Executes via OpenAI Responses API.
+
+Naming Convention: BingFoundry-{Scenario}-{descriptor}
+- Scenario1: BingFoundry-Scenario1-DirectAgent
+- Scenario2: BingFoundry-Scenario2-Orchestrator
+- Scenario3: BingFoundry-Scenario3-MCPAgent  
+- Scenario4: BingFoundry-Scenario4-MultiMarket
+- MCP Server: BingFoundry-MCP-SearchAgent
+- Risk Agent: BingFoundry-RiskAgent
 """
 import logging
 from typing import Optional, List
@@ -31,7 +39,93 @@ class AgentService:
         """
         self.client_factory = client_factory
         self.model_name = model_name
-        self._agents_created: List[str] = []  # Track agent names for cleanup
+        self._cached_agents: dict = {}  # Cache agent info by name
+    
+    def get_or_create_agent(
+        self,
+        name: str,
+        instructions: str,
+        bing_connection_id: str,
+        tools: Optional[List] = None,
+        description: str = "Company risk analyst with Bing grounding",
+    ) -> dict:
+        """
+        Get existing agent or create a new one if it doesn't exist.
+        
+        This implements the "get or create" pattern - agents are reused
+        instead of being created and deleted each time.
+        
+        Args:
+            name: Agent name (use BingFoundry-{Scenario}-{descriptor} convention)
+            instructions: Agent system instructions
+            bing_connection_id: Bing connection ID (can be None if tools provided)
+            tools: Optional list of tools (if None, creates Bing tool)
+            description: Agent description
+            
+        Returns:
+            Dict with agent_id, agent_name, agent_version
+        """
+        project_client = self.client_factory.get_project_client()
+        
+        # Check if we have a cached version
+        if name in self._cached_agents:
+            logger.info(f"♻️  Reusing cached agent: {name}")
+            return self._cached_agents[name]
+        
+        # Try to find existing agent
+        try:
+            existing_agents = list(project_client.agents.list())
+            for agent in existing_agents:
+                if agent.name == name:
+                    logger.info(f"♻️  Found existing agent: {name} (v{agent.version})")
+                    agent_info = {
+                        "agent_id": agent.id,
+                        "agent_name": agent.name,
+                        "agent_version": agent.version,
+                    }
+                    self._cached_agents[name] = agent_info
+                    return agent_info
+        except Exception as e:
+            logger.debug(f"Could not list agents: {e}")
+        
+        # Create new agent
+        if tools is None:
+            # Default to Bing grounding tool
+            tools = [
+                BingGroundingAgentTool(
+                    bing_grounding=BingGroundingSearchToolParameters(
+                        search_configurations=[
+                            BingGroundingSearchConfiguration(
+                                project_connection_id=bing_connection_id
+                            )
+                        ]
+                    )
+                )
+            ]
+        
+        definition = PromptAgentDefinition(
+            model=self.model_name,
+            instructions=instructions,
+            tools=tools,
+        )
+        
+        agent = project_client.agents.create_version(
+            agent_name=name,
+            definition=definition,
+            description=description,
+        )
+        
+        logger.info(f"✅ Created new agent: {agent.name} (v{agent.version})")
+        logger.info(f"   Agent ID: {agent.id}")
+        
+        agent_info = {
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "agent_version": agent.version,
+        }
+        self._cached_agents[name] = agent_info
+        
+        return agent_info
     
     def create_agent(
         self,
@@ -40,50 +134,15 @@ class AgentService:
         bing_connection_id: str,
     ) -> dict:
         """
-        Create a versioned agent with Bing grounding tool.
+        Create or reuse a versioned agent with Bing grounding tool.
         
-        Returns dict with agent info for visibility in Foundry portal.
-        Uses the New Agents API (create_version) from azure-ai-projects 2.0.0b3+.
+        This is a convenience wrapper around get_or_create_agent.
         """
-        project_client = self.client_factory.get_project_client()
-        
-        # Create Bing grounding tool using azure.ai.projects.models
-        bing_tool = BingGroundingAgentTool(
-            bing_grounding=BingGroundingSearchToolParameters(
-                search_configurations=[
-                    BingGroundingSearchConfiguration(
-                        project_connection_id=bing_connection_id
-                    )
-                ]
-            )
-        )
-        
-        # Create agent definition with Bing tool
-        definition = PromptAgentDefinition(
-            model=self.model_name,
+        return self.get_or_create_agent(
+            name=name,
             instructions=instructions,
-            tools=[bing_tool],
+            bing_connection_id=bing_connection_id,
         )
-        
-        # Create versioned agent (visible in Foundry portal)
-        agent = project_client.agents.create_version(
-            agent_name=name,
-            definition=definition,
-            description="Company risk analyst with Bing grounding",
-        )
-        
-        # Track for cleanup
-        self._agents_created.append(agent.name)
-        
-        logger.info(f"✅ Created Agent Version: {agent.name}")
-        logger.info(f"   Agent ID: {agent.id}")
-        logger.info(f"   Version: {agent.version}")
-        
-        return {
-            "agent_id": agent.id,
-            "agent_name": agent.name,
-            "agent_version": agent.version,
-        }
     
     def run_agent_via_responses(
         self,
@@ -128,18 +187,6 @@ class AgentService:
             }
         )
     
-    def delete_agent(self, agent_name: str) -> None:
-        """Delete an agent by name."""
-        project_client = self.client_factory.get_project_client()
-        
-        try:
-            project_client.agents.delete(name=agent_name)
-            logger.info(f"🗑️  Deleted agent: {agent_name}")
-            if agent_name in self._agents_created:
-                self._agents_created.remove(agent_name)
-        except Exception as e:
-            logger.error(f"Error deleting agent {agent_name}: {e}")
-    
     def _extract_citations(self, response) -> List[Citation]:
         """Extract citations from agent response."""
         citations = []
@@ -165,16 +212,3 @@ class AgentService:
                         ))
         
         return citations
-    
-    def cleanup_all(self):
-        """Clean up all created agents."""
-        project_client = self.client_factory.get_project_client()
-        
-        for agent_name in self._agents_created[:]:
-            try:
-                project_client.agents.delete(name=agent_name)
-                logger.info(f"🗑️  Cleaned up agent: {agent_name}")
-            except Exception as e:
-                logger.error(f"Error cleaning up agent {agent_name}: {e}")
-        
-        self._agents_created.clear()

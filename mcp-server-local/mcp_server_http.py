@@ -232,35 +232,48 @@ async def perform_bing_search(query: str, market: str = "en-US") -> dict:
             )
         )
 
-        agent = client.agents.create_version(
-            agent_name=f"bing-search-agent-{market}",
-            definition=PromptAgentDefinition(
-                model=MODEL_DEPLOYMENT_NAME,
-                instructions="You are a search assistant. Return comprehensive, factual results.",
-                tools=[bing_tool],
-            ),
-            description="Bing search agent for MCP server",
+        # Standard naming: BingFoundry-MCP-SearchAgent (no market in name)
+        agent_name = "BingFoundry-MCP-SearchAgent"
+        
+        # Try to find existing agent
+        agent = None
+        try:
+            agents = list(client.agents.list())
+            for existing_agent in agents:
+                if existing_agent.name == agent_name:
+                    logger.info(f"♻️  Reusing existing search agent: {agent_name}")
+                    agent = existing_agent
+                    break
+        except Exception as e:
+            logger.debug(f"Could not list agents: {e}")
+        
+        # Create new agent if not found
+        if agent is None:
+            agent = client.agents.create_version(
+                agent_name=agent_name,
+                definition=PromptAgentDefinition(
+                    model=MODEL_DEPLOYMENT_NAME,
+                    instructions="You are a search assistant. Return comprehensive, factual results. You MUST use the Bing tool.",
+                    tools=[bing_tool],
+                ),
+                description="Bing search agent for MCP server",
+            )
+            logger.info(f"✅ Created new search agent: {agent.name}")
+
+        response = openai_client.responses.create(
+            tool_choice="required",
+            input=query,
+            extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
         )
 
-        try:
-            response = openai_client.responses.create(
-                tool_choice="required",
-                input=query,
-                extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
-            )
+        result = {"query": query, "market": market, "status": "completed", "results": []}
+        if response.output_text:
+            result["results"].append({"content": response.output_text})
 
-            result = {"query": query, "market": market, "status": "completed", "results": []}
-            if response.output_text:
-                result["results"].append({"content": response.output_text})
-
-            return result
-        finally:
-            client.agents.delete_version(
-                agent_name=agent.name,
-                agent_version=agent.version,
-            )
-            if span_cm:
-                span_cm.__exit__(None, None, None)
+        if span_cm:
+            span_cm.__exit__(None, None, None)
+            
+        return result
             
     except Exception as e:
         logger.error(f"Bing search error: {e}")
@@ -612,22 +625,36 @@ async def create_and_run_bing_agent(
             )
         )
         
-        # Create the Worker Agent (Agent 2)
-        agent_name = f"WorkerAgent-{company_name.replace(' ', '-')}-{market}"
-        agent = client.agents.create_version(
-            agent_name=agent_name,
-            definition=PromptAgentDefinition(
-                model=MODEL_DEPLOYMENT_NAME,
-                instructions=f"""You are a specialized risk analysis agent.
-Search for information about {company_name} focusing on {risk_category} risks.
-Provide comprehensive, factual results with sources.
-Market region: {market}""",
-                tools=[bing_tool],
-            ),
-            description=f"Ephemeral worker agent for {company_name} risk analysis",
-        )
+        # Standard naming: BingFoundry-Worker-{market}
+        agent_name = f"BingFoundry-Worker-{market}"
         
-        logger.info(f"✅ Worker Agent created: {agent.name} (id: {agent.id}, version: {agent.version})")
+        # Try to find existing agent
+        agent = None
+        try:
+            agents = list(client.agents.list())
+            for existing_agent in agents:
+                if existing_agent.name == agent_name:
+                    logger.info(f"♻️  Reusing existing Worker Agent: {agent_name} (v{existing_agent.version})")
+                    agent = existing_agent
+                    break
+        except Exception as e:
+            logger.debug(f"Could not list agents: {e}")
+        
+        # Create new agent if not found
+        if agent is None:
+            agent = client.agents.create_version(
+                agent_name=agent_name,
+                definition=PromptAgentDefinition(
+                    model=MODEL_DEPLOYMENT_NAME,
+                    instructions=f"""You are a specialized risk analysis agent.
+Search for information about companies focusing on various risk categories.
+Provide comprehensive, factual results with sources.
+You MUST use the Bing search tool - DO NOT answer from training data.""",
+                    tools=[bing_tool],
+                ),
+                description=f"Worker agent for company risk analysis (market: {market})",
+            )
+            logger.info(f"✅ Created new Worker Agent: {agent.name} (v{agent.version})")
         
         # Execute the search using the Worker Agent
         response = openai_client.responses.create(
@@ -681,18 +708,6 @@ Market region: {market}""",
         }
         
     finally:
-        # ALWAYS delete the Worker Agent after use
-        if agent and client:
-            try:
-                logger.info(f"🗑️  Deleting Worker Agent: {agent.name} v{agent.version}")
-                client.agents.delete_version(
-                    agent_name=agent.name,
-                    agent_version=agent.version
-                )
-                logger.info(f"✅ Worker Agent deleted successfully")
-            except Exception as e:
-                logger.warning(f"Failed to delete Worker Agent: {e}")
-        
         if span_cm:
             span_cm.__exit__(None, None, None)
 
