@@ -84,13 +84,16 @@ class MCPRestAPIScenario(BaseScenario):
             agent = None
             try:
                 agents = list(project_client.agents.list())
+                logger.info(f"Found {len(agents)} agents in project")
                 for existing_agent in agents:
                     if existing_agent.name == agent_name:
                         logger.info(f"♻️  Reusing existing agent: {agent_name} (v{existing_agent.version})")
                         agent = existing_agent
                         break
+                if agent is None:
+                    logger.info(f"Agent '{agent_name}' not found in list, will create new")
             except Exception as e:
-                logger.debug(f"Could not list agents: {e}")
+                logger.warning(f"Could not list agents: {e}")
             
             # Create new agent if not found
             if agent is None:

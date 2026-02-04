@@ -121,14 +121,16 @@ class MCPAgentScenario(BaseScenario):
         # Check if agent already exists
         try:
             agents = list(self._project_client.agents.list())
+            logger.info(f"Found {len(agents)} agents in project")
             for agent in agents:
                 if agent.name == self._orchestrator_agent_name:
                     logger.info(f"♻️  Reusing existing Orchestrator Agent: {agent.name} (v{agent.version})")
                     self._orchestrator_agent = agent
                     return
+            logger.info(f"Agent '{self._orchestrator_agent_name}' not found in list, will create new")
         except Exception as e:
-            logger.debug(f"Could not list agents: {e}")
-        
+            logger.warning(f"Could not list agents: {e}")
+
         # Create new Orchestrator Agent
         await self._create_orchestrator_agent()
     

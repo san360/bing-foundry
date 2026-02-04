@@ -83,12 +83,12 @@ class MultiMarketScenario(BaseScenario):
         ) as span:
             logger.info(f"Executing Scenario 4 for {request.company_name}")
             logger.info(f"   Markets to search: {markets}")
-            
+
             project_client = self.client_factory.get_project_client()
             openai_client = self.client_factory.get_openai_client()
-            
-            # Get or create agent (no market in name - single agent for all markets)
-            agent = self._get_or_create_agent(project_client, markets)
+
+            # Get or create agent (single reusable agent - markets specified in prompt, not agent)
+            agent = self._get_or_create_agent(project_client)
             
             span.set_attribute("agent.id", agent.id)
             span.set_attribute("agent.name", agent.name)
@@ -138,19 +138,27 @@ class MultiMarketScenario(BaseScenario):
                 span.record_exception(e)
                 raise
     
-    def _get_or_create_agent(self, project_client, markets: List[str]):
-        """Get existing agent or create new one."""
-        # Try to find existing agent
+    def _get_or_create_agent(self, project_client):
+        """
+        Get existing agent or create new one.
+
+        The agent is market-independent - it has generic instructions.
+        Specific markets are passed at call time via the prompt.
+        """
+        # Try to find existing agent by name
         try:
             agents = list(project_client.agents.list())
+            logger.info(f"Found {len(agents)} agents in project")
             for existing_agent in agents:
                 if existing_agent.name == AGENT_NAME:
                     logger.info(f"♻️  Reusing existing agent: {AGENT_NAME} (v{existing_agent.version})")
                     return existing_agent
+            logger.info(f"Agent '{AGENT_NAME}' not found in list, will create new")
         except Exception as e:
-            logger.debug(f"Could not list agents: {e}")
-        
+            logger.warning(f"Could not list agents: {e}")
+
         # Create new agent with MCP tool
+        logger.info(f"Creating new agent: {AGENT_NAME}")
         mcp_tool = MCPTool(
             server_label="bing_multi_market_mcp",
             server_url=self.mcp_url,
