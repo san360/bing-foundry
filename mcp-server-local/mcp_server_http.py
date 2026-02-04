@@ -19,6 +19,7 @@ from aiohttp import web
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 
+import httpx
 from azure.identity import (
     DefaultAzureCredential,
     AzureCliCredential,
@@ -28,6 +29,7 @@ from azure.identity import (
     ChainedTokenCredential,
 )
 from azure.ai.projects import AIProjectClient
+from azure.core.credentials import AccessToken
 
 # OpenTelemetry tracing
 try:
@@ -44,6 +46,12 @@ PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("PROJECT_
 BING_CONNECTION_NAME = os.getenv("BING_PROJECT_CONNECTION_NAME") or os.getenv("BING_CONNECTION_NAME", "")
 MODEL_DEPLOYMENT_NAME = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME") or os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-4o")
 PORT = int(os.getenv("PORT", "8000"))
+API_VERSION = os.getenv("API_VERSION", "2025-05-01-preview")
+
+# Cache for credentials and connection info
+_cached_credential = None
+_cached_bing_connection_id = None
+_cached_token: AccessToken = None
 
 # Supported markets
 SUPPORTED_MARKETS = [
@@ -210,6 +218,236 @@ async def perform_bing_search(query: str, market: str = "en-US") -> dict:
         return {"query": query, "market": market, "status": "error", "error": str(e)}
 
 
+def _get_credential():
+    """Get or create cached credential."""
+    global _cached_credential
+    if _cached_credential is None:
+        _cached_credential = ChainedTokenCredential(
+            EnvironmentCredential(),
+            AzureCliCredential(),
+            VisualStudioCodeCredential(),
+            ManagedIdentityCredential(),
+        )
+    return _cached_credential
+
+
+def _get_access_token() -> str:
+    """Get or refresh access token for Azure AI Foundry."""
+    global _cached_token
+    import time
+    
+    # Check if we need a new token (expired or will expire in 5 minutes)
+    if _cached_token is None or _cached_token.expires_on < time.time() + 300:
+        credential = _get_credential()
+        _cached_token = credential.get_token("https://ai.azure.com/.default")
+    return _cached_token.token
+
+
+def _get_bing_connection_id() -> str:
+    """Get or cache the Bing connection ID."""
+    global _cached_bing_connection_id
+    if _cached_bing_connection_id is None:
+        client = get_ai_project_client()
+        bing_connection = client.connections.get(BING_CONNECTION_NAME)
+        _cached_bing_connection_id = bing_connection.id
+        logger.info(f"Cached Bing connection ID: {_cached_bing_connection_id}")
+    return _cached_bing_connection_id
+
+
+async def perform_bing_search_rest_api(
+    query: str,
+    market: str = "en-US",
+    count: int = 7,
+    freshness: str = "Month",
+    set_lang: str = "en"
+) -> dict:
+    """
+    Perform a Bing grounded search using the REST API directly.
+    
+    This is Scenario 3: MCP Tool calling Bing REST API directly without creating an agent.
+    
+    REST API endpoint: POST {PROJECT_ENDPOINT}/openai/responses?api-version={API_VERSION}
+    
+    Args:
+        query: The search query
+        market: Market code (e.g., 'en-US', 'de-DE')
+        count: Number of search results (1-50, default 7)
+        freshness: Time filter - 'Day', 'Week', 'Month', or date range
+        set_lang: UI language code
+        
+    Returns:
+        Dictionary with search results, citations, and metadata
+    """
+    tracer = get_tracer()
+    span_cm = None
+    
+    try:
+        if market not in SUPPORTED_MARKETS:
+            market = "en-US"
+            logger.warning(f"Invalid market code, defaulting to en-US")
+        
+        if tracer:
+            span_cm = tracer.start_as_current_span(
+                "mcp.bing_search_rest_api",
+                attributes={
+                    "mcp.market": market,
+                    "mcp.query_length": len(query),
+                    "mcp.method": "rest_api",
+                    "mcp.count": count,
+                    "mcp.freshness": freshness,
+                },
+            )
+            span_cm.__enter__()
+        
+        # Get connection ID and access token
+        bing_connection_id = _get_bing_connection_id()
+        access_token = _get_access_token()
+        
+        # Build the REST API request using v1 API format
+        # Reference: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/latest
+        # The v1 API doesn't require api-version parameter
+        url = f"{PROJECT_ENDPOINT}/openai/v1/responses"
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        
+        # Build the request payload with bing_grounding tool
+        payload = {
+            "model": MODEL_DEPLOYMENT_NAME,
+            "input": query,
+            "tool_choice": "required",
+            "tools": [
+                {
+                    "type": "bing_grounding",
+                    "bing_grounding": {
+                        "search_configurations": [
+                            {
+                                "project_connection_id": bing_connection_id,
+                                "count": count,
+                                "market": market,
+                                "set_lang": set_lang,
+                                "freshness": freshness.lower() if freshness in ["Day", "Week", "Month"] else freshness,
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        
+        logger.info(f"Calling Bing REST API: {url}")
+        logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
+        
+        # Make the REST API call
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            
+            if response.status_code != 200:
+                error_text = response.text
+                logger.error(f"Bing REST API error: HTTP {response.status_code} - {error_text}")
+                return {
+                    "query": query,
+                    "market": market,
+                    "method": "rest_api",
+                    "status": "error",
+                    "error": f"HTTP {response.status_code}: {error_text[:500]}",
+                }
+            
+            data = response.json()
+            logger.debug(f"REST API Response: {json.dumps(data, indent=2)[:1000]}...")
+        
+        # Extract results from the response
+        result = {
+            "query": query,
+            "market": market,
+            "method": "rest_api",
+            "status": "completed",
+            "api_version": API_VERSION,
+            "response_id": data.get("id", ""),
+            "model": data.get("model", MODEL_DEPLOYMENT_NAME),
+            "results": [],
+            "citations": [],
+        }
+        
+        # Extract output text
+        output_text = data.get("output_text", "")
+        if not output_text:
+            # Try to extract from output array
+            for output_item in data.get("output", []):
+                if output_item.get("type") == "message":
+                    for content in output_item.get("content", []):
+                        if content.get("type") == "output_text":
+                            output_text = content.get("text", "")
+                            # Extract citations from annotations
+                            for annotation in content.get("annotations", []):
+                                if annotation.get("type") == "url_citation":
+                                    result["citations"].append({
+                                        "url": annotation.get("url", ""),
+                                        "title": annotation.get("title", ""),
+                                        "start_index": annotation.get("start_index"),
+                                        "end_index": annotation.get("end_index"),
+                                    })
+        
+        if output_text:
+            result["results"].append({"content": output_text})
+        
+        # Add usage information if available
+        if "usage" in data:
+            result["usage"] = data["usage"]
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Bing REST API search error: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {
+            "query": query,
+            "market": market,
+            "method": "rest_api",
+            "status": "error",
+            "error": str(e),
+        }
+    finally:
+        if span_cm:
+            span_cm.__exit__(None, None, None)
+
+
+async def analyze_company_risk_rest_api(
+    company_name: str,
+    risk_category: str,
+    market: str = "en-US",
+    count: int = 7,
+    freshness: str = "Month"
+) -> dict:
+    """
+    Analyze company risks using Bing REST API directly (Scenario 3).
+    
+    This demonstrates calling the Bing grounding REST API without creating an agent.
+    """
+    queries = {
+        "litigation": f"{company_name} lawsuits legal cases court filings recent news",
+        "labor_practices": f"{company_name} labor violations employee complaints child labor workplace issues",
+        "environmental": f"{company_name} environmental violations pollution ESG sustainability issues",
+        "financial": f"{company_name} financial risks debt bankruptcy credit rating concerns",
+        "regulatory": f"{company_name} regulatory violations fines investigations compliance issues",
+        "reputation": f"{company_name} scandals controversies negative press reputational risks",
+        "all": f"{company_name} risks controversies legal issues regulatory violations ESG concerns"
+    }
+    
+    query = queries.get(risk_category, queries["all"])
+    search_result = await perform_bing_search_rest_api(query, market, count, freshness)
+    
+    return {
+        "company": company_name,
+        "risk_category": risk_category,
+        "market": market,
+        "method": "rest_api",
+        "search_results": search_result
+    }
+
+
 async def analyze_company_risk(company_name: str, risk_category: str, market: str) -> dict:
     """Analyze company risks using Bing grounded search."""
     queries = {
@@ -256,7 +494,7 @@ async def handle_list_tools(request: web.Request) -> web.Response:
     tools = [
         {
             "name": "bing_grounded_search",
-            "description": "Perform a Bing web search with grounding. Use 'market' for region-specific results.",
+            "description": "Perform a Bing web search with grounding using SDK Agent. Use 'market' for region-specific results.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -267,8 +505,22 @@ async def handle_list_tools(request: web.Request) -> web.Response:
             }
         },
         {
+            "name": "bing_search_rest_api",
+            "description": "Perform a Bing web search using the REST API directly (Scenario 3). This bypasses the SDK Agent and calls the Bing grounding REST API directly.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query"},
+                    "market": {"type": "string", "description": "Market code (e.g., 'en-US', 'de-DE')", "default": "en-US"},
+                    "count": {"type": "integer", "description": "Number of search results (1-50)", "default": 7},
+                    "freshness": {"type": "string", "description": "Time filter: 'Day', 'Week', 'Month'", "default": "Month"}
+                },
+                "required": ["query"]
+            }
+        },
+        {
             "name": "analyze_company_risk",
-            "description": "Analyze a company for risk factors from an insurance perspective.",
+            "description": "Analyze a company for risk factors using SDK Agent with Bing tool.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -279,6 +531,25 @@ async def handle_list_tools(request: web.Request) -> web.Response:
                         "default": "all"
                     },
                     "market": {"type": "string", "default": "en-US"}
+                },
+                "required": ["company_name"]
+            }
+        },
+        {
+            "name": "analyze_company_risk_rest_api",
+            "description": "Analyze a company for risk factors using Bing REST API directly (Scenario 3). This bypasses the SDK Agent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "company_name": {"type": "string", "description": "Company name to analyze"},
+                    "risk_category": {
+                        "type": "string",
+                        "enum": ["litigation", "labor_practices", "environmental", "financial", "regulatory", "reputation", "all"],
+                        "default": "all"
+                    },
+                    "market": {"type": "string", "description": "Market code (e.g., 'en-US', 'de-DE')", "default": "en-US"},
+                    "count": {"type": "integer", "description": "Number of search results (1-50)", "default": 7},
+                    "freshness": {"type": "string", "description": "Time filter: 'Day', 'Week', 'Month'", "default": "Month"}
                 },
                 "required": ["company_name"]
             }
@@ -326,6 +597,19 @@ async def handle_call_tool(request: web.Request) -> web.Response:
             result = await perform_bing_search(query, market)
             return web.json_response({"content": [{"type": "text", "text": json.dumps(result, indent=2)}]})
         
+        elif name == "bing_search_rest_api":
+            # Scenario 3: Direct REST API call
+            query = arguments.get("query", "")
+            market = arguments.get("market", "en-US")
+            count = arguments.get("count", 7)
+            freshness = arguments.get("freshness", "Month")
+            
+            if not query:
+                return web.json_response({"error": "Query is required"}, status=400)
+            
+            result = await perform_bing_search_rest_api(query, market, count, freshness)
+            return web.json_response({"content": [{"type": "text", "text": json.dumps(result, indent=2)}]})
+        
         elif name == "analyze_company_risk":
             company_name = arguments.get("company_name", "")
             risk_category = arguments.get("risk_category", "all")
@@ -335,6 +619,20 @@ async def handle_call_tool(request: web.Request) -> web.Response:
                 return web.json_response({"error": "company_name is required"}, status=400)
             
             result = await analyze_company_risk(company_name, risk_category, market)
+            return web.json_response({"content": [{"type": "text", "text": json.dumps(result, indent=2)}]})
+        
+        elif name == "analyze_company_risk_rest_api":
+            # Scenario 3: Company risk analysis using REST API directly
+            company_name = arguments.get("company_name", "")
+            risk_category = arguments.get("risk_category", "all")
+            market = arguments.get("market", "en-US")
+            count = arguments.get("count", 7)
+            freshness = arguments.get("freshness", "Month")
+            
+            if not company_name:
+                return web.json_response({"error": "company_name is required"}, status=400)
+            
+            result = await analyze_company_risk_rest_api(company_name, risk_category, market, count, freshness)
             return web.json_response({"content": [{"type": "text", "text": json.dumps(result, indent=2)}]})
         
         elif name == "list_supported_markets":
@@ -371,7 +669,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
             tools = [
                 {
                     "name": "bing_grounded_search",
-                    "description": "Perform a Bing web search with grounding.",
+                    "description": "Perform a Bing web search with grounding using SDK Agent.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -382,14 +680,43 @@ async def handle_mcp(request: web.Request) -> web.Response:
                     }
                 },
                 {
+                    "name": "bing_search_rest_api",
+                    "description": "Perform a Bing web search using REST API directly (Scenario 3).",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "market": {"type": "string", "default": "en-US"},
+                            "count": {"type": "integer", "default": 7},
+                            "freshness": {"type": "string", "default": "Month"}
+                        },
+                        "required": ["query"]
+                    }
+                },
+                {
                     "name": "analyze_company_risk",
-                    "description": "Analyze company risks for insurance assessment.",
+                    "description": "Analyze company risks using SDK Agent with Bing tool.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "company_name": {"type": "string"},
                             "risk_category": {"type": "string", "default": "all"},
                             "market": {"type": "string", "default": "en-US"}
+                        },
+                        "required": ["company_name"]
+                    }
+                },
+                {
+                    "name": "analyze_company_risk_rest_api",
+                    "description": "Analyze company risks using Bing REST API directly (Scenario 3).",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "company_name": {"type": "string"},
+                            "risk_category": {"type": "string", "default": "all"},
+                            "market": {"type": "string", "default": "en-US"},
+                            "count": {"type": "integer", "default": 7},
+                            "freshness": {"type": "string", "default": "Month"}
                         },
                         "required": ["company_name"]
                     }
@@ -426,11 +753,30 @@ async def handle_mcp(request: web.Request) -> web.Response:
                         arguments.get("market", "en-US")
                     )
                     result = {"content": [{"type": "text", "text": json.dumps(search_result, indent=2)}]}
+                elif name == "bing_search_rest_api":
+                    # Scenario 3: Direct REST API call
+                    search_result = await perform_bing_search_rest_api(
+                        arguments.get("query", ""),
+                        arguments.get("market", "en-US"),
+                        arguments.get("count", 7),
+                        arguments.get("freshness", "Month")
+                    )
+                    result = {"content": [{"type": "text", "text": json.dumps(search_result, indent=2)}]}
                 elif name == "analyze_company_risk":
                     risk_result = await analyze_company_risk(
                         arguments.get("company_name", ""),
                         arguments.get("risk_category", "all"),
                         arguments.get("market", "en-US")
+                    )
+                    result = {"content": [{"type": "text", "text": json.dumps(risk_result, indent=2)}]}
+                elif name == "analyze_company_risk_rest_api":
+                    # Scenario 3: Company risk analysis using REST API directly
+                    risk_result = await analyze_company_risk_rest_api(
+                        arguments.get("company_name", ""),
+                        arguments.get("risk_category", "all"),
+                        arguments.get("market", "en-US"),
+                        arguments.get("count", 7),
+                        arguments.get("freshness", "Month")
                     )
                     result = {"content": [{"type": "text", "text": json.dumps(risk_result, indent=2)}]}
                 elif name == "list_supported_markets":

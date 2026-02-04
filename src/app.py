@@ -170,6 +170,8 @@ def init_session_state():
         st.session_state.analysis_results = []
     if "mcp_results" not in st.session_state:
         st.session_state.mcp_results = []
+    if "rest_api_results" not in st.session_state:
+        st.session_state.rest_api_results = []
     if "agent" not in st.session_state:
         st.session_state.agent = None
     if "config_valid" not in st.session_state:
@@ -510,11 +512,12 @@ def main():
     config = render_sidebar()
     logger.info(f"Sidebar rendered. Config valid: {st.session_state.config_valid}")
     
-    # Create tabs - NEW: Added Scenario tabs
+    # Create tabs - NEW: Added Scenario 3 tab
     logger.info("Creating application tabs...")
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🎯 Scenario 1: Direct Agent", 
         "🔗 Scenario 2: Agent → MCP Agent",
+        "🌐 Scenario 3: MCP → REST API",
         "📊 Market Comparison", 
         "📖 Documentation"
     ])
@@ -524,11 +527,14 @@ def main():
         
     with tab2:
         render_mcp_agent_scenario(config)
-        
+    
     with tab3:
-        render_comparison_tab()
+        render_rest_api_scenario(config)
         
     with tab4:
+        render_comparison_tab()
+        
+    with tab5:
         render_documentation_tab()
 
 
@@ -932,6 +938,398 @@ def run_mcp_analysis(url: str, key: str, company_name: str, risk_category: str, 
             st.exception(e)
 
 
+def render_rest_api_scenario(config: AzureConfig):
+    """Render Scenario 3: Agent with Custom MCP Tool calling Bing REST API"""
+    st.header("🌐 Scenario 3: Agent → Custom MCP Tool → Bing REST API")
+    
+    st.markdown("""
+    **Architecture:** User → **AI Agent (with MCP Tool)** → MCP Server → Bing REST API
+    
+    In this scenario:
+    1. We create an **AI Foundry Agent** with a **custom MCP tool** attached
+    2. The agent decides when to call the MCP tool based on the user's query
+    3. The MCP tool calls the **Bing Grounding REST API directly** (not via another agent)
+    4. Results flow back through the agent to the user
+    
+    This demonstrates the full MCP integration pattern with REST API backend.
+    """)
+    
+    # Important note about network accessibility
+    st.warning("""
+    ⚠️ **Important**: Azure AI Foundry agents need to connect to MCP servers over the internet.
+    
+    **For Scenario 3 to work:**
+    - ✅ Use **devtunnel** (Microsoft's tool) or ngrok to expose localhost
+    - ✅ Deploy your MCP server to Azure (Functions, Container Apps, Web Apps)
+    - ❌ `localhost:8000` will NOT work (agent is in Azure, can't reach your machine)
+    
+    **Quick Test with devtunnel (Recommended):**
+    ```bash
+    # Create tunnel (one-time setup)
+    devtunnel create --allow-anonymous
+    devtunnel port create <tunnel-id> -p 8000
+    
+    # Start tunnel daily
+    devtunnel host <tunnel-id>
+    
+    # Copy the URL shown (NOT the inspect URL): https://tunnel-id.devtunnels.ms/mcp
+    ```
+    
+    📚 See [docs/devtunnel-quick-start.md](../docs/devtunnel-quick-start.md) for complete setup guide with code examples for all scenarios.
+    """)
+    
+    # Mermaid diagram for Scenario 3
+    with st.expander("📊 Architecture Diagram (Mermaid)", expanded=True):
+        mermaid_code = """
+sequenceDiagram
+    participant U as 👤 User
+    participant App as 🖥️ Streamlit App
+    participant Agent as 🤖 AI Agent<br/>(with MCP Tool)
+    participant MCP as 🔌 MCP Server
+    participant REST as 🌐 Bing REST API
+    
+    U->>App: Enter company + Select market (de-DE)
+    App->>Agent: Create Agent with MCPTool<br/>pointing to MCP Server
+    App->>Agent: Send user query
+    
+    Note over Agent: Agent decides to<br/>call MCP tool
+    
+    Agent->>MCP: Call bing_search_rest_api tool<br/>{"query": "...", "market": "de-DE"}
+    
+    Note over MCP: MCP tool calls<br/>REST API directly
+    
+    MCP->>REST: POST /openai/v1/responses<br/>with bing_grounding config
+    REST-->>MCP: Grounded search results
+    MCP-->>Agent: Tool response
+    Agent-->>App: Agent response with citations
+    App-->>U: Display results
+        """
+        render_mermaid(mermaid_code, height=500)
+        
+        st.caption("💡 **Key Point**: The Agent has an MCP Tool attached and calls it. The MCP Tool then calls Bing REST API directly.")
+    
+    # Compare all scenarios
+    st.subheader("🔄 Architecture Comparison")
+    
+    col_s1, col_s2, col_s3 = st.columns(3)
+    
+    with col_s1:
+        st.markdown("""
+        **Scenario 1: Direct**
+        ```
+        User
+        └── Agent
+            └── Bing Tool (SDK)
+                └── Bing API
+        ```
+        ⚡ Simplest
+        """)
+    
+    with col_s2:
+        st.markdown("""
+        **Scenario 2: MCP → Agent**
+        ```
+        User
+        └── MCP Server
+            └── Agent (created)
+                └── Bing Tool
+        ```
+        🔧 Agent per request
+        """)
+        
+    with col_s3:
+        st.markdown("""
+        **Scenario 3: Agent → MCP**
+        ```
+        User
+        └── Agent (MCP Tool)
+            └── MCP Server
+                └── REST API
+        ```
+        🎯 Custom MCP backend
+        """)
+    
+    st.divider()
+    
+    # Configuration
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("🔌 MCP Server Configuration")
+        
+        mcp_url = st.text_input(
+            "MCP Server URL (must be publicly accessible)",
+            value="https://your-tunnel-id.devtunnels.ms/mcp",
+            key="s3_mcp_url",
+            help="Use devtunnel or Azure-deployed MCP server URL. localhost:8000 will NOT work!"
+        )
+        
+    with col2:
+        st.subheader("🔍 Connection Test")
+        if st.button("Test MCP Connection", key="s3_test_conn"):
+            with st.spinner("Testing connection..."):
+                success, message = test_mcp_connection(mcp_url, "")
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+    
+    st.divider()
+    
+    # Analysis inputs
+    col_a, col_b = st.columns([2, 1])
+    
+    with col_a:
+        company_name = st.text_input(
+            "Company Name",
+            placeholder="Enter company name (e.g., 'Tesla', 'Volkswagen')",
+            key="s3_company",
+            help="The agent will use the MCP tool to search for this company"
+        )
+        
+    with col_b:
+        market_selection = st.selectbox(
+            "Market/Region",
+            options=list(MARKET_OPTIONS.keys()),
+            index=0,
+            key="s3_market",
+            help="Market parameter passed to the MCP tool"
+        )
+    
+    # Get market code
+    market_code = None
+    market_config = MARKET_OPTIONS.get(market_selection)
+    if market_config:
+        market_code = market_config.code
+    
+    # Show the agent configuration
+    st.subheader("📝 Agent with MCP Tool Configuration")
+    
+    agent_config = {
+        "agent": {
+            "model": "gpt-4o",
+            "instructions": "You are a risk analysis assistant. Use the available MCP tools to search for company information.",
+            "tools": [
+                {
+                    "type": "mcp",
+                    "server_label": "bing-rest-api-mcp",
+                    "server_url": mcp_url,
+                    "allowed_tools": ["bing_search_rest_api", "analyze_company_risk_rest_api"]
+                }
+            ]
+        },
+        "query": f"Analyze risks for {company_name or '<company>'} in the {market_code or 'en-US'} market"
+    }
+    
+    with st.expander("View Agent + MCP Tool Configuration", expanded=False):
+        st.json(agent_config)
+    
+    st.info(f"""
+    **Data Flow (Scenario 3):**
+    1. Create AI Agent with **MCPTool** pointing to `{mcp_url}`
+    2. Send query: "Analyze risks for {company_name or '<company>'}"
+    3. Agent decides to call `bing_search_rest_api` MCP tool
+    4. MCP Server receives tool call, builds REST API request
+    5. REST API executes Bing grounding search
+    6. Results flow back: REST API → MCP → Agent → User
+    """)
+    
+    st.divider()
+    
+    # Run button
+    run_disabled = not st.session_state.config_valid or not company_name
+    
+    if st.button(
+        "🤖 Run Agent with MCP Tool (Scenario 3)",
+        type="primary",
+        disabled=run_disabled,
+        key="s3_run",
+        use_container_width=True
+    ):
+        run_agent_with_mcp_tool(config, mcp_url, company_name, market_code)
+    
+    if run_disabled and not company_name:
+        st.warning("Please enter a company name to analyze")
+    
+    # Display results
+    if st.session_state.rest_api_results:
+        st.divider()
+        st.subheader("📊 Agent + MCP Tool Results (Scenario 3)")
+        
+        for i, result in enumerate(reversed(st.session_state.rest_api_results)):
+            with st.expander(
+                f"[Agent→MCP] {result['company']} | Market: {result['market']} | {result['timestamp']}",
+                expanded=(i == 0)
+            ):
+                st.caption("**Route:** User → Agent (MCP Tool) → MCP Server → Bing REST API")
+                
+                # Show agent info
+                if result.get('agent_id'):
+                    st.caption(f"**Agent ID:** {result.get('agent_id')}")
+                
+                # Show MCP tool call
+                st.caption("**MCP Tool Called by Agent:**")
+                st.code(f"""
+MCP Server: {result.get('mcp_url', mcp_url)}
+Tool: bing_search_rest_api
+Query: "{result.get('query', '')}"
+Market: "{result['market']}"
+                """)
+                
+                # Results
+                st.markdown("---")
+                st.markdown("**Agent Response:**")
+                st.markdown(result.get('text', 'No response'))
+                
+                # Citations
+                citations = result.get('citations', [])
+                if citations:
+                    st.markdown("---")
+                    st.caption("**Sources:**")
+                    for citation in citations:
+                        url = citation.get('url', '')
+                        title = citation.get('title', url)
+                        st.markdown(f"- [{title}]({url})")
+
+
+def run_agent_with_mcp_tool(config: AzureConfig, mcp_url: str, company_name: str, market: str):
+    """
+    Run Scenario 3: Create an Agent with MCP Tool that calls our custom MCP server.
+    
+    The MCP server then calls the Bing REST API directly.
+    """
+    import datetime
+    
+    with st.spinner(f"Creating Agent with MCP Tool for {company_name}..."):
+        try:
+            # Run the async agent creation and execution
+            async def do_agent_with_mcp():
+                from azure.identity import (
+                    AzureCliCredential,
+                    VisualStudioCodeCredential,
+                    EnvironmentCredential,
+                    ManagedIdentityCredential,
+                    ChainedTokenCredential,
+                )
+                from azure.ai.projects import AIProjectClient
+                from azure.ai.projects.models import PromptAgentDefinition, MCPTool
+                
+                logger.info(f"Starting Scenario 3: Agent with MCP Tool for {company_name}")
+                
+                credential = ChainedTokenCredential(
+                    EnvironmentCredential(),
+                    AzureCliCredential(),
+                    VisualStudioCodeCredential(),
+                    ManagedIdentityCredential(),
+                )
+                
+                project_client = AIProjectClient(
+                    endpoint=config.project_endpoint,
+                    credential=credential,
+                )
+                
+                openai_client = project_client.get_openai_client()
+                
+                # Create MCP Tool pointing to our custom MCP server
+                # The MCP server has tools like bing_search_rest_api that call Bing REST API
+                mcp_tool = MCPTool(
+                    server_label="bing_rest_api_mcp",
+                    server_url=mcp_url,
+                    require_approval="never",  # Auto-approve for demo
+                    allowed_tools=["bing_search_rest_api", "bing_grounded_search", "list_supported_markets"],
+                )
+                
+                logger.info(f"Created MCP Tool pointing to: {mcp_url}")
+                
+                # Create agent with the MCP tool
+                agent = project_client.agents.create_version(
+                    agent_name="CompanyRiskAnalyst-MCP",
+                    definition=PromptAgentDefinition(
+                        model=config.model_deployment_name,
+                        instructions=f"""You are a company risk analysis assistant. 
+You have access to an MCP tool that can search the web using Bing.
+
+When asked to analyze a company, use the bing_search_rest_api tool to search for:
+- Recent news and controversies
+- Legal issues and lawsuits  
+- Regulatory violations
+- ESG concerns
+
+Always include the market parameter '{market or "en-US"}' in your searches for localized results.
+
+Provide a comprehensive risk assessment based on the search results.""",
+                        tools=[mcp_tool],
+                    ),
+                    description="Agent with custom MCP tool for Bing REST API search",
+                )
+                
+                logger.info(f"Created agent: {agent.id}, {agent.name}, version {agent.version}")
+                
+                try:
+                    # Build the query
+                    query = f"Search for and analyze any risks, controversies, legal issues, or ESG concerns related to {company_name}. Use the market {market or 'en-US'} for the search."
+                    
+                    # Call the agent
+                    response = openai_client.responses.create(
+                        input=query,
+                        extra_body={"agent": {"name": agent.name, "type": "agent_reference"}},
+                    )
+                    
+                    logger.info(f"Got response from agent")
+                    
+                    # Extract results
+                    result = {
+                        "company": company_name,
+                        "market": market or "en-US",
+                        "query": query,
+                        "mcp_url": mcp_url,
+                        "agent_id": agent.id,
+                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "text": response.output_text if hasattr(response, 'output_text') else str(response),
+                        "citations": [],
+                    }
+                    
+                    # Try to extract citations
+                    if hasattr(response, 'output') and response.output:
+                        for output_item in response.output:
+                            if hasattr(output_item, 'content'):
+                                for content in output_item.content:
+                                    if hasattr(content, 'annotations'):
+                                        for annotation in content.annotations:
+                                            if hasattr(annotation, 'url'):
+                                                result["citations"].append({
+                                                    "url": annotation.url,
+                                                    "title": getattr(annotation, 'title', annotation.url),
+                                                })
+                    
+                    return result
+                    
+                finally:
+                    # Clean up the agent
+                    project_client.agents.delete_version(
+                        agent_name=agent.name,
+                        agent_version=agent.version,
+                    )
+                    logger.info(f"Deleted agent: {agent.name}")
+            
+            # Run the async function
+            result = asyncio.run(do_agent_with_mcp())
+            
+            # Store result
+            st.session_state.rest_api_results.append(result)
+            
+            st.success(f"✅ Agent with MCP Tool completed for {company_name}")
+            st.rerun()
+            
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"❌ Error in Scenario 3: {str(e)}")
+            logger.error(f"Traceback:\n{error_trace}")
+            st.error(f"❌ Error: {str(e)}")
+            st.exception(e)
+
+
 def render_documentation_tab():
     """Render the documentation tab"""
     st.header("📖 Documentation")
@@ -1004,12 +1402,46 @@ flowchart LR
     """
     render_mermaid(mermaid_s2, height=420)
     
+    st.markdown("""
+### Scenario 3: MCP Tool → Bing REST API (Direct)
+    """)
+    mermaid_s3 = """
+flowchart LR
+    subgraph User["👤 User Interface"]
+        A[Company Input] --> B[Market Dropdown]
+    end
+    
+    subgraph App["🖥️ Application"]
+        C[Build MCP Call<br/>with REST API tool]
+    end
+    
+    subgraph MCP["🔌 MCP Server"]
+        D[Receive MCP Request]
+        E[Build REST API<br/>request payload]
+        F[bing_grounding<br/>tool config]
+    end
+    
+    subgraph REST["🌐 REST API"]
+        G[POST /openai/responses]
+        H[Bing Grounding<br/>Search]
+    end
+    
+    B --> C -->|"market: de-DE"| D --> E --> F --> G --> H
+    H --> G --> MCP --> App --> User
+    
+    style B fill:#FFD700
+    style E fill:#FFD700
+    style F fill:#FFD700
+    style G fill:#FFD700
+    """
+    render_mermaid(mermaid_s3, height=420)
+    
     st.divider()
     
     # Scenario comparison table
     st.subheader("🔄 Scenario Comparison")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("""
@@ -1053,6 +1485,28 @@ flowchart LR
         - Multi-agent systems
         - Shared tool infrastructure
         - Decoupled architectures
+        """)
+    
+    with col3:
+        st.markdown("""
+        ### Scenario 3: Agent → MCP → REST
+        
+        | Aspect | Detail |
+        |--------|--------|
+        | **Architecture** | User → Agent (MCP Tool) → REST |
+        | **Market Config** | Via MCP tool |
+        | **Latency** | Moderate (agent + MCP) |
+        | **Complexity** | Advanced |
+        
+        **Market Parameter Flow:**
+        ```
+        User → Agent → MCP Tool → REST API
+        ```
+        
+        **Best For:**
+        - Custom MCP backends
+        - Direct REST API control
+        - Full agent + MCP integration
         """)
     
     st.divider()
@@ -1102,6 +1556,30 @@ sequenceDiagram
     Note over U2,B2: Market is PASSED AS ARGUMENT then used at tool creation
     """
     render_mermaid(mermaid_seq2, height=360)
+    
+    mermaid_seq3 = """
+sequenceDiagram
+    box Scenario 3: Agent → MCP → REST (Direct)
+        participant U3 as 👤 User
+        participant A3 as 🖥️ App
+        participant AG as 🤖 Agent<br/>(MCP Tool)
+        participant M3 as 🔌 MCP Server
+        participant R3 as 🌐 REST API
+    end
+    
+    U3->>A3: Select market="de-DE"
+    A3->>AG: Create Agent with MCPTool
+    AG->>M3: Call bing_search_rest_api (market: "de-DE")
+    M3->>M3: Build REST payload
+    M3->>R3: POST /openai/v1/responses
+    R3->>R3: Execute Bing grounding search
+    R3-->>M3: JSON response with citations
+    M3-->>AG: Tool response
+    AG-->>U3: Agent response with results
+    
+    Note over U3,R3: Agent calls MCP Tool → MCP calls REST API directly
+    """
+    render_mermaid(mermaid_seq3, height=360)
     
     st.divider()
     
@@ -1165,6 +1643,54 @@ def handle_mcp_call(arguments):
         )
     )
     # Create agent and run...
+```
+
+#### Scenario 3 (REST API) - Direct API Call (No Agent)
+```python
+# User selects market from dropdown
+market = "de-DE"  # From st.selectbox
+
+# MCP tool receives and makes direct REST API call
+# NO AGENT IS CREATED - just a direct HTTP request!
+
+import httpx
+
+# Get access token and connection ID
+access_token = credential.get_token("https://ai.azure.com/.default").token
+connection_id = project_client.connections.get(bing_connection_name).id
+
+# Build REST API request
+url = f"{project_endpoint}/openai/responses?api-version=2025-05-01-preview"
+payload = {
+    "model": "gpt-4o",
+    "input": "Tesla risks controversies legal issues",
+    "tool_choice": "required",
+    "tools": [
+        {
+            "type": "bing_grounding",
+            "bing_grounding": {
+                "search_configurations": [
+                    {
+                        "project_connection_id": connection_id,
+                        "count": 7,
+                        "market": market,  # ← Direct in REST payload
+                        "freshness": "month"
+                    }
+                ]
+            }
+        }
+    ]
+}
+
+# Make direct REST call - no agent lifecycle!
+async with httpx.AsyncClient() as client:
+    response = await client.post(
+        url,
+        headers={"Authorization": f"Bearer {access_token}"},
+        json=payload
+    )
+    result = response.json()
+    # Result contains output_text and citations
 ```
     """)
     
