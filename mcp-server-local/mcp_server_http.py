@@ -319,6 +319,28 @@ def _get_bing_connection_id() -> str:
     return _cached_bing_connection_id
 
 
+VALID_FRESHNESS_VALUES = {"day", "week", "month"}
+
+
+def _validate_freshness(freshness: str) -> str:
+    """Validate and normalize the freshness parameter for Bing API.
+    
+    Bing only accepts: 'day', 'week', 'month', or date ranges like 'yyyy-M-d..yyyy-M-d'.
+    
+    Returns:
+        Normalized lowercase freshness value.
+    """
+    normalized = freshness.strip().lower()
+    if normalized in VALID_FRESHNESS_VALUES:
+        return normalized
+    # Allow date range formats (e.g., '2025-1-1..2025-12-31')
+    if '..' in normalized:
+        return normalized
+    # Invalid value — default to 'month' and warn
+    logger.warning(f"Invalid freshness value '{freshness}', defaulting to 'month'. Supported: day, week, month, or date range (yyyy-M-d..yyyy-M-d)")
+    return "month"
+
+
 async def perform_bing_search_rest_api(
     query: str,
     market: str = "en-US",
@@ -337,7 +359,7 @@ async def perform_bing_search_rest_api(
         query: The search query
         market: Market code (e.g., 'en-US', 'de-DE')
         count: Number of search results (1-50, default 7)
-        freshness: Time filter - 'Day', 'Week', 'Month', or date range
+        freshness: Time filter - 'day', 'week', 'month', or date range
         set_lang: UI language code
         
     Returns:
@@ -350,6 +372,8 @@ async def perform_bing_search_rest_api(
         if market not in SUPPORTED_MARKETS:
             market = "en-US"
             logger.warning(f"Invalid market code, defaulting to en-US")
+        
+        freshness = _validate_freshness(freshness)
         
         if tracer:
             span_cm = tracer.start_as_current_span(
@@ -394,7 +418,7 @@ async def perform_bing_search_rest_api(
                                 "count": count,
                                 "market": market,
                                 "set_lang": set_lang,
-                                "freshness": freshness.lower() if freshness in ["Day", "Week", "Month"] else freshness,
+                                "freshness": freshness,
                             }
                         ]
                     }
@@ -614,6 +638,9 @@ async def create_and_run_bing_agent(
         
         bing_connection = client.connections.get(BING_CONNECTION_NAME)
         
+        # Validate freshness
+        freshness = _validate_freshness(freshness)
+        
         # Create Bing tool with market-specific configuration
         bing_tool = BingGroundingAgentTool(
             bing_grounding=BingGroundingSearchToolParameters(
@@ -622,7 +649,7 @@ async def create_and_run_bing_agent(
                         project_connection_id=bing_connection.id,
                         market=market,
                         count=count,
-                        freshness=freshness.lower() if freshness in ["Day", "Week", "Month"] else freshness,
+                        freshness=freshness,
                     )
                 ]
             )
@@ -770,7 +797,7 @@ async def handle_list_tools(request: web.Request) -> web.Response:
                     "query": {"type": "string", "description": "The search query"},
                     "market": {"type": "string", "description": "Market code (e.g., 'en-US', 'de-DE')", "default": "en-US"},
                     "count": {"type": "integer", "description": "Number of search results (1-50)", "default": 7},
-                    "freshness": {"type": "string", "description": "Time filter: 'Day', 'Week', 'Month'", "default": "Month"}
+                    "freshness": {"type": "string", "description": "Time filter for results", "enum": ["Day", "Week", "Month"], "default": "Month"}
                 },
                 "required": ["query"]
             }
@@ -806,7 +833,7 @@ async def handle_list_tools(request: web.Request) -> web.Response:
                     },
                     "market": {"type": "string", "description": "Market code (e.g., 'en-US', 'de-DE')", "default": "en-US"},
                     "count": {"type": "integer", "description": "Number of search results (1-50)", "default": 7},
-                    "freshness": {"type": "string", "description": "Time filter: 'Day', 'Week', 'Month'", "default": "Month"}
+                    "freshness": {"type": "string", "description": "Time filter for results", "enum": ["Day", "Week", "Month"], "default": "Month"}
                 },
                 "required": ["company_name"]
             }
@@ -825,7 +852,7 @@ async def handle_list_tools(request: web.Request) -> web.Response:
                     },
                     "market": {"type": "string", "description": "Bing market code (e.g., 'en-US', 'de-DE')", "default": "en-US"},
                     "count": {"type": "integer", "description": "Number of search results (1-50)", "default": 10},
-                    "freshness": {"type": "string", "description": "Time filter: 'Day', 'Week', 'Month'", "default": "Month"}
+                    "freshness": {"type": "string", "description": "Time filter for results", "enum": ["Day", "Week", "Month"], "default": "Month"}
                 },
                 "required": ["company_name"]
             }

@@ -136,10 +136,17 @@ class CompanyRiskAgent:
         """
         # Build the search configuration
         # NOTE: This is where you control market-specific behavior!
+        # Validate freshness - Bing only accepts: day, week, month, or date ranges
+        valid_freshness = {"day", "week", "month"}
+        normalized = freshness.strip().lower()
+        if normalized not in valid_freshness and '..' not in normalized:
+            logger.warning(f"Invalid freshness '{freshness}', defaulting to 'month'")
+            normalized = "month"
+        
         config_params = {
             "project_connection_id": self._bing_connection_id,
             "count": count,
-            "freshness": freshness,
+            "freshness": normalized,
         }
         
         # Only add market if specified - this tests default behavior
