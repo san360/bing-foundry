@@ -24,16 +24,50 @@ def render_scenario4(config: AzureConfig):
     
     st.markdown("""
     **Architecture:** User → AI Agent → MCP Tool (called for EACH market) → Aggregated Results
-    
+
     Agent calls the MCP tool multiple times with different market parameters,
     then aggregates results into a comprehensive global analysis.
     """)
-    
+
+    with st.expander("📐 View Workflow Architecture", expanded=False):
+        st.code("""
+  User        Streamlit App     MultiMarket Agent    MCP Server      Bing REST API
+   │               │                  │                  │                │
+   │ en-US,de-DE,  │                  │                  │                │
+   │ ja-JP         │                  │                  │                │
+   │──────────────>│                  │                  │                │
+   │               │ multi-market req │                  │                │
+   │               │─────────────────>│                  │                │
+   │               │                  │                  │                │
+   │               │                  │  ┌─── Loop: for each market ───┐ │
+   │               │                  │  │ bing_search_rest_api        │ │
+   │               │                  │──│───────────────>│            │ │
+   │               │                  │  │                │ REST call  │ │
+   │               │                  │  │                │───────────>│ │
+   │               │                  │  │                │ Results    │ │
+   │               │                  │  │                │<───────────│ │
+   │               │                  │  │ JSON+citations │            │ │
+   │               │                  │<─│────────────────│            │ │
+   │               │                  │  └────────────────────────────-┘ │
+   │               │                  │                  │                │
+   │               │                  │ Aggregate results│                │
+   │               │ Cross-market     │                  │                │
+   │               │<─────────────────│                  │                │
+   │ Comparative   │                  │                  │                │
+   │ report        │                  │                  │                │
+   │<──────────────│                  │                  │                │
+        """, language=None)
+
+        st.markdown("""
+**Note:** Markets are searched **sequentially** - one at a time. For parallel
+execution with better fault tolerance, see Scenario 5.
+        """)
+
     st.info("""
     💡 **Key Feature**: Select multiple markets and the agent will search each one separately,
     then provide a comparative analysis across all selected regions.
     """)
-    
+
     st.divider()
     
     # MCP URL

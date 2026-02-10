@@ -700,9 +700,9 @@ You MUST use the Bing search tool - DO NOT answer from training data.""",
         }
         
         logger.info(f"📊 Worker Agent completed analysis with {len(citations)} citations")
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Error in create_and_run_bing_agent: {e}")
         return {
@@ -712,8 +712,18 @@ You MUST use the Bing search tool - DO NOT answer from training data.""",
             "market": market,
             "error": str(e),
         }
-        
+
     finally:
+        # Clean up ephemeral worker agent
+        if client and agent:
+            try:
+                client.agents.delete_version(
+                    agent_name=agent.name,
+                    agent_version=agent.version,
+                )
+                logger.info(f"🗑️  MCP: Cleaned up worker agent {agent.name} (v{agent.version})")
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to clean up worker agent: {cleanup_err}")
         if span_cm:
             span_cm.__exit__(None, None, None)
 

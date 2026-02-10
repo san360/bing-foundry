@@ -24,18 +24,49 @@ def render_scenario2(config: AzureConfig):
     
     st.markdown("""
     **Architecture:** Orchestrator Agent → MCP Tool → Worker Agent (ephemeral)
-    
-    **Flow:**
-    1. **Orchestrator Agent (Agent 1)** receives the request
-    2. Orchestrator calls MCP tool `create_and_run_bing_agent` with market config
-    3. MCP Server creates **Worker Agent (Agent 2)** with specified market
-    4. Worker Agent executes Bing-grounded search
-    5. MCP Server **deletes** Worker Agent after getting results
-    6. Results flow back through Orchestrator to User
-    
+
     **Key:** Worker Agents are ephemeral - created per-request and deleted after use.
     """)
-    
+
+    with st.expander("📐 View Workflow Architecture", expanded=False):
+        st.code("""
+  User        Streamlit App    Orchestrator     MCP Server      Worker Agent     Bing API
+   │               │               │               │                │              │
+   │ company+mkt   │               │               │                │              │
+   │──────────────>│               │               │                │              │
+   │               │ risk request  │               │                │              │
+   │               │──────────────>│               │                │              │
+   │               │               │ create_and_   │                │              │
+   │               │               │ run_bing_agent│                │              │
+   │               │               │──────────────>│                │              │
+   │               │               │               │ Create agent   │              │
+   │               │               │               │───────────────>│              │
+   │               │               │               │                │ Grounded     │
+   │               │               │               │                │ search       │
+   │               │               │               │                │─────────────>│
+   │               │               │               │                │ Results      │
+   │               │               │               │                │<─────────────│
+   │               │               │               │ Search results │              │
+   │               │               │               │<───────────────│              │
+   │               │               │               │ Delete worker  │              │
+   │               │               │ JSON+citations│                │              │
+   │               │               │<──────────────│                │              │
+   │               │ Final analysis│               │                │              │
+   │               │<──────────────│               │                │              │
+   │ Risk report   │               │               │                │              │
+   │<──────────────│               │               │                │              │
+        """, language=None)
+
+        st.markdown("""
+**Flow:**
+1. **Orchestrator Agent (Agent 1)** receives the request
+2. Orchestrator calls MCP tool `create_and_run_bing_agent` with market config
+3. MCP Server creates **Worker Agent (Agent 2)** with specified market
+4. Worker Agent executes Bing-grounded search
+5. MCP Server **deletes** Worker Agent after getting results
+6. Results flow back through Orchestrator to User
+        """)
+
     st.divider()
     
     # MCP Configuration

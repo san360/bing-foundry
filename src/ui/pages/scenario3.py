@@ -24,15 +24,46 @@ def render_scenario3(config: AzureConfig):
     
     st.markdown("""
     **Architecture:** User → AI Agent (MCP Tool) → MCP Server → Bing REST API
-    
+
     Agent has MCP tool attached, which calls Bing REST API directly.
     """)
-    
+
+    with st.expander("📐 View Workflow Architecture", expanded=False):
+        st.code("""
+  User         Streamlit App      MCP Agent        MCP Server       Bing REST API
+   │                │                │                │                   │
+   │ search + mkt   │                │                │                   │
+   │───────────────>│                │                │                   │
+   │                │ invoke w/ MCP  │                │                   │
+   │                │───────────────>│                │                   │
+   │                │                │ bing_search_   │                   │
+   │                │                │ rest_api       │                   │
+   │                │                │───────────────>│                   │
+   │                │                │                │ POST /openai/     │
+   │                │                │                │ responses         │
+   │                │                │                │──────────────────>│
+   │                │                │                │ JSON + citations  │
+   │                │                │                │<──────────────────│
+   │                │                │ Formatted      │                   │
+   │                │                │ results        │                   │
+   │                │                │<───────────────│                   │
+   │                │ Analysis       │                │                   │
+   │                │<───────────────│                │                   │
+   │ Risk report    │                │                │                   │
+   │<───────────────│                │                │                   │
+        """, language=None)
+
+        st.markdown("""
+**Key Difference from Scenario 2:** No nested agents are created. The MCP server
+directly calls the Bing REST API, giving full control over search parameters
+(count, freshness, setLang).
+        """)
+
     st.warning("""
     ⚠️ **Important**: Azure AI Foundry agents need public MCP server URLs.
     Use **devtunnel** or deploy to Azure.
     """)
-    
+
     st.divider()
     
     # MCP URL

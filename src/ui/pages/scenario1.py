@@ -24,10 +24,29 @@ def render_scenario1(config: AzureConfig):
     
     st.markdown("""
     **Architecture:** User → AI Agent (with Bing Grounding Tool attached directly)
-    
+
     In this scenario, the **market parameter** is configured when creating the tool.
     """)
-    
+
+    with st.expander("📐 View Workflow Architecture", expanded=False):
+        st.code("""
+  User           Streamlit App       DirectAgent        Bing Grounding API
+   │                  │                  │                      │
+   │ company + market │                  │                      │
+   │─────────────────>│                  │                      │
+   │                  │ Create Bing tool │                      │
+   │                  │ (market config)  │                      │
+   │                  │─────────────────>│                      │
+   │                  │                  │  Search w/ grounding │
+   │                  │                  │─────────────────────>│
+   │                  │                  │  Results + citations │
+   │                  │                  │<─────────────────────│
+   │                  │ Analysis response│                      │
+   │                  │<─────────────────│                      │
+   │ Risk analysis    │                  │                      │
+   │<─────────────────│                  │                      │
+        """, language=None)
+
     st.divider()
     
     # Input form
